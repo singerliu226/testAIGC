@@ -1,0 +1,211 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8" />
+<meta name="viewport" content="width=device-width, initial-scale=1" />
+<title>论文盾 - 管理员面板</title>
+<style>
+*,*::before,*::after{box-sizing:border-box;margin:0;padding:0}
+:root{
+  --pri:#4f46e5;--pri-h:#4338ca;--pri-l:#eef2ff;
+  --ok:#059669;--ok-bg:#ecfdf5;
+  --warn:#d97706;--warn-bg:#fffbeb;
+  --err:#dc2626;--err-bg:#fef2f2;
+  --g50:#f9fafb;--g100:#f3f4f6;--g200:#e5e7eb;--g300:#d1d5db;--g400:#9ca3af;--g500:#6b7280;--g700:#374151;--g900:#111827;
+  --radius:12px;--shadow:0 1px 3px rgba(0,0,0,.08);
+  --font-sans:ui-sans-serif,system-ui,-apple-system,"Segoe UI",Roboto,Helvetica,Arial,sans-serif;
+  --font-mono:ui-monospace,SFMono-Regular,Menlo,Monaco,Consolas,monospace;
+}
+body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-height:1.6;min-height:100vh}
+.header{background:white;border-bottom:1px solid var(--g200);padding:0 24px;position:sticky;top:0;z-index:50}
+.header-inner{max-width:900px;margin:0 auto;display:flex;align-items:center;justify-content:space-between;height:56px;gap:16px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;color:var(--pri);text-decoration:none}
+.back-link{font-size:13px;color:var(--g500);text-decoration:none;border:1px solid var(--g200);padding:4px 12px;border-radius:6px;transition:.15s}
+.back-link:hover{border-color:var(--pri);color:var(--pri)}
+
+.container{max-width:900px;margin:0 auto;padding:24px}
+.card{background:white;border:1px solid var(--g200);border-radius:var(--radius);box-shadow:var(--shadow);margin-bottom:20px;overflow:hidden}
+.card-header{padding:16px 20px;border-bottom:1px solid var(--g100);font-weight:600;font-size:15px;display:flex;align-items:center;justify-content:space-between}
+.card-body{padding:20px}
+
+/* 登录表单 */
+.login-wrap{max-width:360px;margin:80px auto;text-align:center}
+.login-wrap h2{margin-bottom:16px;font-size:20px}
+.login-wrap input{width:100%;padding:10px 14px;border:1px solid var(--g200);border-radius:8px;font-size:14px;outline:none;margin-bottom:12px;transition:.15s}
+.login-wrap input:focus{border-color:var(--pri)}
+.login-wrap .btn{width:100%}
+
+.btn{display:inline-flex;align-items:center;justify-content:center;gap:6px;padding:8px 18px;border-radius:8px;font-size:13px;font-weight:600;cursor:pointer;border:none;transition:.15s}
+.btn-primary{background:var(--pri);color:white}
+.btn-primary:hover{background:var(--pri-h)}
+.btn-outline{background:white;color:var(--g700);border:1px solid var(--g200)}
+.btn-outline:hover{border-color:var(--pri);color:var(--pri)}
+.btn-sm{padding:5px 12px;font-size:12px}
+.btn-ok{background:var(--ok);color:white}
+.btn-ok:hover{background:#047857}
+
+/* 表格 */
+.acc-table{width:100%;border-collapse:collapse;font-size:13px}
+.acc-table th{text-align:left;padding:10px 12px;background:var(--g50);color:var(--g500);font-size:12px;font-weight:500;border-bottom:1px solid var(--g200)}
+.acc-table td{padding:10px 12px;border-bottom:1px solid var(--g100)}
+.acc-table tr:hover td{background:var(--g50)}
+.balance-num{font-family:var(--font-mono);font-weight:600;font-size:14px}
+.topup-input{width:80px;padding:4px 8px;border:1px solid var(--g200);border-radius:6px;font-size:13px;text-align:center;font-family:var(--font-mono);outline:none}
+.topup-input:focus{border-color:var(--pri)}
+
+.empty{text-align:center;color:var(--g400);padding:40px 20px;font-size:14px}
+
+.toast{position:fixed;top:72px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:13px;font-weight:500;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,.15);pointer-events:none;opacity:0;transition:opacity .3s}
+.toast.show{opacity:1}
+.toast-ok{background:var(--ok);color:white}
+.toast-err{background:var(--err);color:white}
+
+.stat-row{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap}
+.stat-card{flex:1;min-width:160px;background:white;border:1px solid var(--g200);border-radius:var(--radius);padding:16px 20px}
+.stat-card .label{font-size:12px;color:var(--g500);margin-bottom:4px}
+.stat-card .value{font-size:24px;font-weight:700;font-family:var(--font-mono);color:var(--g900)}
+</style>
+</head>
+<body>
+
+<header class="header">
+  <div class="header-inner">
+    <span class="brand">
+      <svg viewBox="0 0 28 28" width="28" height="28" fill="none"><circle cx="14" cy="14" r="13" stroke="currentColor" stroke-width="2"/><path d="M9 14.5l3 3 7-7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
+      论文盾 · 管理员
+    </span>
+    <a class="back-link" href="/">← 返回主页</a>
+  </div>
+</header>
+
+<!-- 登录 -->
+<div class="login-wrap" id="loginWrap">
+  <h2>管理员登录</h2>
+  <p style="color:var(--g500);font-size:13px;margin-bottom:20px">请输入管理员密钥以继续</p>
+  <input type="password" id="secretInput" placeholder="管理员密钥" autocomplete="off" />
+  <button class="btn btn-primary" id="loginBtn">登 录</button>
+</div>
+
+<!-- 主面板 -->
+<div class="container" id="mainPanel" style="display:none">
+  <div class="stat-row" id="stats">
+    <div class="stat-card"><div class="label">总账号数</div><div class="value" id="statTotal">-</div></div>
+    <div class="stat-card"><div class="label">总积分余额</div><div class="value" id="statBalance">-</div></div>
+  </div>
+
+  <div class="card">
+    <div class="card-header">
+      <span>账号管理</span>
+      <button class="btn btn-outline btn-sm" id="refreshBtn">刷新</button>
+    </div>
+    <div class="card-body" style="padding:0">
+      <table class="acc-table">
+        <thead><tr><th>账号 ID</th><th>当前积分</th><th>创建时间</th><th>充值</th></tr></thead>
+        <tbody id="accBody"></tbody>
+      </table>
+      <div class="empty hidden" id="emptyAccounts">暂无任何账号</div>
+    </div>
+  </div>
+</div>
+
+<div class="toast" id="toast"></div>
+
+<script>
+const $=id=>document.getElementById(id);
+const loginWrap=$("loginWrap"),mainPanel=$("mainPanel"),secretInput=$("secretInput"),loginBtn=$("loginBtn");
+const accBody=$("accBody"),emptyAccounts=$("emptyAccounts"),refreshBtn=$("refreshBtn");
+const statTotal=$("statTotal"),statBalance=$("statBalance"),toastEl=$("toast");
+
+const adminSecretKey="aigc_admin_secret";
+let secret=localStorage.getItem(adminSecretKey)||"";
+
+function showToast(msg,type,dur){
+  toastEl.textContent=msg;toastEl.className="toast toast-"+(type||"ok")+" show";
+  clearTimeout(toastEl._t);toastEl._t=setTimeout(()=>toastEl.classList.remove("show"),dur||3000);
+}
+
+function shortenId(id){
+  if(id.length<=20)return id;
+  return id.slice(0,8)+"…"+id.slice(-6);
+}
+
+async function verifyAndEnter(){
+  const s=secretInput.value.trim();
+  if(!s){secretInput.focus();return}
+  try{
+    const res=await fetch("/api/admin/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({secret:s})});
+    const json=await res.json();
+    if(!json.ok){showToast("密钥错误","err");secretInput.select();return}
+    secret=s;localStorage.setItem(adminSecretKey,s);
+    loginWrap.style.display="none";mainPanel.style.display="block";
+    loadAccounts();
+  }catch(e){showToast("验证失败","err")}
+}
+
+async function loadAccounts(){
+  try{
+    const res=await fetch("/api/admin/accounts",{headers:{"x-admin-secret":secret}});
+    const json=await res.json();
+    if(!json.ok){showToast(json.error?.message||"加载失败","err");return}
+    const accs=json.accounts||[];
+    statTotal.textContent=String(accs.length);
+    statBalance.textContent=String(accs.reduce((s,a)=>s+a.balance,0));
+
+    if(!accs.length){accBody.innerHTML="";emptyAccounts.classList.remove("hidden");return}
+    emptyAccounts.classList.add("hidden");
+
+    accs.sort((a,b)=>b.updatedAt-a.updatedAt);
+    accBody.innerHTML=accs.map(a=>{
+      const dt=new Date(a.createdAt).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+      return `<tr>
+        <td title="${esc(a.accountId)}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortenId(a.accountId))}</td>
+        <td><span class="balance-num">${a.balance}</span></td>
+        <td style="color:var(--g400)">${esc(dt)}</td>
+        <td style="white-space:nowrap">
+          <input class="topup-input" data-acc="${esc(a.accountId)}" type="number" min="1" value="100" />
+          <button class="btn btn-ok btn-sm" data-topup="${esc(a.accountId)}">充值</button>
+        </td>
+      </tr>`;
+    }).join("");
+  }catch(e){showToast("网络错误","err")}
+}
+
+function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+
+loginBtn.addEventListener("click",verifyAndEnter);
+secretInput.addEventListener("keydown",e=>{if(e.key==="Enter")verifyAndEnter()});
+refreshBtn.addEventListener("click",loadAccounts);
+
+accBody.addEventListener("click",async e=>{
+  const btn=e.target.closest?.("[data-topup]");
+  if(!btn)return;
+  const accId=btn.dataset.topup;
+  const input=accBody.querySelector(`input[data-acc="${accId}"]`);
+  const pts=parseInt(input?.value);
+  if(!pts||pts<1){showToast("请输入有效积分数","err");return}
+  btn.disabled=true;btn.textContent="充值中…";
+  try{
+    const res=await fetch("/api/admin/topup",{
+      method:"POST",
+      headers:{"Content-Type":"application/json","x-admin-secret":secret},
+      body:JSON.stringify({accountId:accId,points:pts}),
+    });
+    const json=await res.json();
+    if(!json.ok){showToast(json.error?.message||"充值失败","err");return}
+    showToast(`已为 ${shortenId(accId)} 充值 ${pts} 积分，当前余额 ${json.balance}`,"ok",4000);
+    loadAccounts();
+  }catch(e){showToast("网络错误","err")}finally{
+    btn.disabled=false;btn.textContent="充值";
+  }
+});
+
+// 自动登录
+if(secret){
+  loginWrap.style.display="none";mainPanel.style.display="block";
+  loadAccounts();
+}else{
+  secretInput.focus();
+}
+</script>
+</body>
+</html>

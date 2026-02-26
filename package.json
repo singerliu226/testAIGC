@@ -1,0 +1,39 @@
+{
+  "name": "aigc-docx-agent",
+  "version": "1.0.0",
+  "description": "Upload .docx, detect AIGC signals, suggest fixes, rewrite via DashScope OpenAI-compatible API, and export revised .docx.",
+  "main": "dist/index.js",
+  "scripts": {
+    "dev": "NODE_ENV=development tsx watch src/index.ts",
+    "build": "tsc -p tsconfig.json",
+    "start": "NODE_ENV=production node dist/index.js",
+    "typecheck": "tsc -p tsconfig.json --noEmit",
+    "e2e:local": "tsx scripts/e2e.ts"
+  },
+  "keywords": [],
+  "author": "",
+  "license": "ISC",
+  "type": "module",
+  "engines": {
+    "node": ">=20"
+  },
+  "dependencies": {
+    "dotenv": "^17.3.1",
+    "express": "^5.2.1",
+    "fast-xml-parser": "^5.3.7",
+    "jszip": "^3.10.1",
+    "multer": "^2.0.2",
+    "nodejieba": "^3.5.2",
+    "openai": "^6.22.0",
+    "uuid": "^13.0.0",
+    "winston": "^3.19.0",
+    "zod": "^4.3.6"
+  },
+  "devDependencies": {
+    "@types/express": "^5.0.6",
+    "@types/multer": "^2.0.0",
+    "@types/node": "^25.3.0",
+    "tsx": "^4.21.0",
+    "typescript": "^5.9.3"
+  }
+}
