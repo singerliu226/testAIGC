@@ -116,12 +116,9 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .risk-cell .delta.bad{color:var(--err)}
 
 /* ── paragraph text ── */
-.para-text{color:var(--g700);line-height:1.7;font-size:13px;max-height:8em;overflow:hidden;position:relative;cursor:pointer;transition:max-height .35s ease}
+.para-text{color:var(--g700);line-height:1.7;font-size:13px;position:relative;padding:8px 12px;background:var(--g50);border-radius:6px;border-left:3px solid var(--pri)}
 .ai-hl{background:linear-gradient(transparent 60%,rgba(255,59,48,.18) 60%);color:var(--err);font-weight:500;padding:0 1px;border-radius:2px}
 .para-loc{font-size:11px;color:var(--g400);margin-bottom:4px}
-.para-text.expanded{max-height:none;overflow:visible}
-.para-text:not(.expanded)::after{content:"点击展开全文 ▾";position:absolute;bottom:0;left:0;right:0;height:22px;background:linear-gradient(transparent,white 70%);display:flex;align-items:flex-end;justify-content:center;font-size:11px;color:var(--pri);pointer-events:none}
-.para-text.expanded::after{content:"点击收起 ▴";position:relative;display:block;text-align:center;font-size:11px;color:var(--g400);margin-top:4px;height:auto;background:none}
 
 /* ── signals ── */
 .signal-list{list-style:none;margin-top:8px}
@@ -737,7 +734,7 @@ function render(){
       </td>
       <td>
         <div class="para-loc">第 ${r.index+1} 段 / 共 ${allBefore.length} 段 · 约第 ${Math.round((r.index/allBefore.length)*100)}% 处</div>
-        <div class="para-text" onclick="this.classList.toggle('expanded')">${highlightText(escapeHtml(r.text||""),extractHighlightWords(r.signals))}</div>
+        <div class="para-text">${highlightText(escapeHtml(r.text||""),extractHighlightWords(r.signals))}</div>
         ${sigs?`<div class="signal-list">${sigs}</div>`:""}
         <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
           ${(hasRw||sigs)?`<button class="btn btn-outline btn-sm" data-toggle="${escapeHtml(pid)}">${hasRw?"查看修改":"查看详情"}</button>`:""}
