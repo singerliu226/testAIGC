@@ -106,10 +106,13 @@ export function createApiRouter(params: {
 
       const reportBefore = detectAigcRisk(paragraphs);
 
-      // LLM 复核：对规则检测分 >= 25 的段落调用大模型二次审核
-      const candidatesForJudge = reportBefore.paragraphReports.filter(
-        (r) => r.riskScore >= 25
-      );
+      // LLM 复核：对规则检测分 >= 50 的段落调用大模型二次审核
+      // 按分数降序，最多 30 段 + 30 并发，确保 Zeabur 30s 超时内完成
+      const MAX_JUDGE = 30;
+      const candidatesForJudge = reportBefore.paragraphReports
+        .filter((r) => r.riskScore >= 50)
+        .sort((a, b) => b.riskScore - a.riskScore)
+        .slice(0, MAX_JUDGE);
 
       if (candidatesForJudge.length > 0 && process.env.DASHSCOPE_API_KEY) {
         log.info("Starting LLM judge review", {
@@ -117,7 +120,7 @@ export function createApiRouter(params: {
           candidateCount: candidatesForJudge.length,
         });
 
-        const batchSize = 10;
+        const batchSize = 30;
         for (let bi = 0; bi < candidatesForJudge.length; bi += batchSize) {
           const batch = candidatesForJudge.slice(bi, bi + batchSize);
           const judgeResults = await Promise.allSettled(

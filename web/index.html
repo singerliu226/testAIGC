@@ -772,11 +772,18 @@ uploadBtn.addEventListener("click",async()=>{
   uploadBtn.disabled=true;syncExportButtons(null,false);overviewCard.classList.add("hidden");reportCard.classList.add("hidden");actionBar.classList.remove("visible");
   closeChat();
   state={sessionId:null,session:null,selected:new Set(),chatParagraphId:null,chatSending:false};
-  uploadProgress.classList.add("visible");uploadProgressBar.style.width="30%";
+  uploadProgress.classList.add("visible");uploadProgressBar.style.width="10%";
+  dropTitle.textContent="正在解析文档并检测 AI 痕迹…";
+  dropHint.textContent="大型论文（5万字以上）可能需要 1~2 分钟，请耐心等待";
   try{
     const fd=new FormData();fd.append("file",f);
-    const res=await fetch("/api/upload",{method:"POST",body:fd});const json=await res.json();
-    uploadProgressBar.style.width="80%";
+    const ctrl=new AbortController();
+    const timer=setTimeout(()=>ctrl.abort(),300000);
+    let pct=10;const pTimer=setInterval(()=>{pct=Math.min(pct+2,85);uploadProgressBar.style.width=pct+"%"},1500);
+    const res=await fetch("/api/upload",{method:"POST",body:fd,signal:ctrl.signal});
+    clearTimeout(timer);clearInterval(pTimer);
+    const json=await res.json();
+    uploadProgressBar.style.width="90%";
     log(json);
     if(json.ok&&json.sessionId){
       state.sessionId=json.sessionId;
@@ -791,7 +798,15 @@ uploadBtn.addEventListener("click",async()=>{
       activeFilter=riskyIds.length>0?"medium":"all";
       render();
     }
-  }catch(e){log(String(e))}finally{
+  }catch(e){
+    const msg=String(e);
+    if(msg.includes("abort")||msg.includes("Abort")){
+      showToast("检测超时，请稍后重试或减少文档长度","err",5000);
+    }else{
+      showToast("上传失败："+msg,"err",5000);
+    }
+    uploadProgress.classList.remove("visible");
+  }finally{
     uploadBtn.disabled=false;
     dropTitle.textContent="拖拽或点击上传 .docx 文件";
     dropHint.textContent="支持论文、开题报告、答辩稿等 Word 文档，最大 20MB";
