@@ -117,6 +117,8 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 
 /* ── paragraph text ── */
 .para-text{color:var(--g700);line-height:1.7;font-size:13px;max-height:8em;overflow:hidden;position:relative;cursor:pointer;transition:max-height .35s ease}
+.ai-hl{background:linear-gradient(transparent 60%,rgba(255,59,48,.18) 60%);color:var(--err);font-weight:500;padding:0 1px;border-radius:2px}
+.para-loc{font-size:11px;color:var(--g400);margin-bottom:4px}
 .para-text.expanded{max-height:none;overflow:visible}
 .para-text:not(.expanded)::after{content:"点击展开全文 ▾";position:absolute;bottom:0;left:0;right:0;height:22px;background:linear-gradient(transparent,white 70%);display:flex;align-items:flex-end;justify-content:center;font-size:11px;color:var(--pri);pointer-events:none}
 .para-text.expanded::after{content:"点击收起 ▴";position:relative;display:block;text-align:center;font-size:11px;color:var(--g400);margin-top:4px;height:auto;background:none}
@@ -541,6 +543,34 @@ const categoryZh={languageStats:"语言统计",styleHabits:"写作风格",logicC
 function zhCategory(c){return categoryZh[c]||c}
 function escapeHtml(s){return String(s).replace(/&/g,"&amp;").replace(/</g,"&lt;").replace(/>/g,"&gt;").replace(/"/g,"&quot;").replace(/'/g,"&#039;")}
 
+/**
+ * 从信号列表中提取所有命中关键词，用于在段落文本中高亮
+ */
+function extractHighlightWords(signals){
+  const words=new Set();
+  for(const s of signals||[]){
+    for(const ev of s.evidence||[]){
+      // "命中：A、B、C" / "命中模板短语：A、B" / "连接词：A、B"
+      const m=ev.match(/(?:命中|连接词|强断言)[^：]*：(.+)/);
+      if(m){m[1].split(/[、,，]/).forEach(w=>{const t=w.trim().replace(/[（）]/g,"");if(t&&t.length>=2&&t.length<=10)words.add(t)})}
+      // '匹配："xxx"'
+      const m2=ev.match(/匹配："([^"]+)"/);
+      if(m2&&m2[1].length>=2)words.add(m2[1]);
+    }
+  }
+  return [...words];
+}
+
+/**
+ * 在已经 escapeHtml 后的文本中高亮关键词
+ */
+function highlightText(escapedText,words){
+  if(!words.length)return escapedText;
+  const escaped=words.map(w=>escapeHtml(w).replace(/[.*+?^${}()|[\]\\]/g,"\\$&"));
+  const re=new RegExp("("+escaped.join("|")+")","g");
+  return escapedText.replace(re,'<mark class="ai-hl">$1</mark>');
+}
+
 function diffHtml(a,b){
   a=String(a||"");b=String(b||"");
   if(!a&&!b)return'<span style="color:var(--g400)">（无内容）</span>';
@@ -706,7 +736,8 @@ function render(){
         </div>
       </td>
       <td>
-        <div class="para-text" onclick="this.classList.toggle('expanded')">${escapeHtml(r.text||"")}</div>
+        <div class="para-loc">第 ${r.index+1} 段 / 共 ${allBefore.length} 段 · 约第 ${Math.round((r.index/allBefore.length)*100)}% 处</div>
+        <div class="para-text" onclick="this.classList.toggle('expanded')">${highlightText(escapeHtml(r.text||""),extractHighlightWords(r.signals))}</div>
         ${sigs?`<div class="signal-list">${sigs}</div>`:""}
         <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
           ${(hasRw||sigs)?`<button class="btn btn-outline btn-sm" data-toggle="${escapeHtml(pid)}">${hasRw?"查看修改":"查看详情"}</button>`:""}
