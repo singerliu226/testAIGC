@@ -791,12 +791,36 @@ uploadBtn.addEventListener("click",async()=>{
       const sess=await fetchSession(json.sessionId);state.session=sess;
       uploadProgressBar.style.width="100%";
       setTimeout(()=>uploadProgress.classList.remove("visible"),600);
-      // 上传后自动选中所有疑似AI段落，默认筛选"疑似AI"
       const rb=sess.reportBefore;
       const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
       state.selected=new Set(riskyIds);
       activeFilter=riskyIds.length>0?"medium":"all";
       render();
+      // LLM 复核在后台进行，轮询刷新结果
+      if(json.judgeStatus==="pending"){
+        showToast("规则检测完成，AI 复核正在后台进行中…","ok",4000);
+        let polls=0;const maxPolls=12;
+        const pollTimer=setInterval(async()=>{
+          polls++;
+          try{
+            const s2=await fetchSession(json.sessionId);
+            if(!s2)return;
+            const oldScore=state.session?.reportBefore?.overallRiskScore;
+            const newScore=s2.reportBefore?.overallRiskScore;
+            state.session=s2;
+            if(newScore!==oldScore){
+              const rb2=s2.reportBefore;
+              const ids2=(rb2?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
+              state.selected=new Set(ids2);
+              render();
+              showToast("AI 复核完成，结果已更新","ok",3000);
+              clearInterval(pollTimer);
+            }else if(polls>=maxPolls){
+              clearInterval(pollTimer);
+            }
+          }catch(e){clearInterval(pollTimer)}
+        },5000);
+      }
     }
   }catch(e){
     const msg=String(e);

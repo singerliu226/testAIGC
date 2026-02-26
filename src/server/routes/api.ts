@@ -106,94 +106,15 @@ export function createApiRouter(params: {
 
       const reportBefore = detectAigcRisk(paragraphs);
 
-      // LLM 复核：对规则检测分 >= 50 的段落调用大模型二次审核
-      // 按分数降序，最多 30 段 + 30 并发，确保 Zeabur 30s 超时内完成
-      const MAX_JUDGE = 30;
-      const candidatesForJudge = reportBefore.paragraphReports
-        .filter((r) => r.riskScore >= 50)
-        .sort((a, b) => b.riskScore - a.riskScore)
-        .slice(0, MAX_JUDGE);
-
-      if (candidatesForJudge.length > 0 && process.env.DASHSCOPE_API_KEY) {
-        log.info("Starting LLM judge review", {
-          sessionId: session.sessionId,
-          candidateCount: candidatesForJudge.length,
-        });
-
-        const batchSize = 30;
-        for (let bi = 0; bi < candidatesForJudge.length; bi += batchSize) {
-          const batch = candidatesForJudge.slice(bi, bi + batchSize);
-          const judgeResults = await Promise.allSettled(
-            batch.map((r) =>
-              judgeParagraphWithDashscope({
-                logger: log,
-                paragraphText: r.text,
-                signals: r.signals,
-              })
-            )
-          );
-
-          for (let j = 0; j < batch.length; j++) {
-            const result = judgeResults[j];
-            if (result.status !== "fulfilled") continue;
-
-            const judgeOutput = result.value;
-            const paraReport = batch[j];
-
-            // 加权融合：规则分 * 0.4 + LLM 分 * 0.6
-            const fused = Math.round(
-              paraReport.riskScore * 0.4 + judgeOutput.riskScore0to100 * 0.6
-            );
-            paraReport.riskScore = Math.min(100, Math.max(0, fused));
-            paraReport.riskLevel =
-              paraReport.riskScore >= 70
-                ? "high"
-                : paraReport.riskScore >= 35
-                  ? "medium"
-                  : "low";
-
-            // LLM 理由追加为额外信号
-            if (judgeOutput.topReasons?.length) {
-              paraReport.signals.push({
-                signalId: "llm_judge_review",
-                category: "aiPattern",
-                title: "AI 复核判断",
-                evidence: judgeOutput.topReasons.slice(0, 3),
-                suggestion: judgeOutput.shouldRewrite
-                  ? "建议对此段落进行改写以降低 AI 痕迹。"
-                  : "AI 复核认为此段落风险可控。",
-                score: 0, // 分数已经融合，不再额外加分
-              });
-            }
-          }
-        }
-
-        // 重新计算文档整体分（对齐知网标准：AI字符数占比）
-        let aiChars = 0, allChars = 0;
-        for (const r of reportBefore.paragraphReports) {
-          const len = r.text.length;
-          allChars += len;
-          if (r.riskScore >= 35) aiChars += len * (r.riskScore / 100);
-        }
-        reportBefore.overallRiskScore = allChars > 0
-          ? Math.min(100, Math.max(0, Math.round((aiChars / allChars) * 100)))
-          : 0;
-        reportBefore.overallRiskLevel =
-          reportBefore.overallRiskScore >= 70 ? "high" : reportBefore.overallRiskScore >= 35 ? "medium" : "low";
-
-        log.info("LLM judge review completed", {
-          sessionId: session.sessionId,
-          overallScore: reportBefore.overallRiskScore,
-        });
-      }
-
+      // 先保存规则检测结果并立即返回（避免 Zeabur 等平台的 HTTP 超时）
+      const storedParas = parsed.paragraphs.map((p) => ({
+        id: p.id,
+        index: p.index,
+        text: p.text,
+        kind: p.kind,
+      }));
       params.store.update(session.sessionId, {
-        paragraphs: parsed.paragraphs.map((p) => ({
-          id: p.id,
-          index: p.index,
-          text: p.text,
-          kind: p.kind,
-        })),
+        paragraphs: storedParas,
         reportBefore,
         reportAfter: undefined,
         revised: {},
@@ -213,8 +134,85 @@ export function createApiRouter(params: {
         sessionId: session.sessionId,
         paragraphCount: parsed.paragraphs.length,
         report: reportBefore,
-        message: "上传并解析成功：已生成AIGC检测报告（下一步可对高风险段落执行改写）",
+        judgeStatus: "pending",
+        message: "规则检测完成，LLM 复核正在后台进行中…",
       });
+
+      // ── LLM 复核在后台异步执行，不阻塞 HTTP 响应 ──
+      const MAX_JUDGE = 30;
+      const candidatesForJudge = reportBefore.paragraphReports
+        .filter((r) => r.riskScore >= 50)
+        .sort((a, b) => b.riskScore - a.riskScore)
+        .slice(0, MAX_JUDGE);
+
+      if (candidatesForJudge.length > 0 && process.env.DASHSCOPE_API_KEY) {
+        (async () => {
+          try {
+            log.info("Starting background LLM judge review", {
+              sessionId: session.sessionId,
+              candidateCount: candidatesForJudge.length,
+            });
+
+            const judgeResults = await Promise.allSettled(
+              candidatesForJudge.map((r) =>
+                judgeParagraphWithDashscope({
+                  logger: log,
+                  paragraphText: r.text,
+                  signals: r.signals,
+                })
+              )
+            );
+
+            for (let j = 0; j < candidatesForJudge.length; j++) {
+              const result = judgeResults[j];
+              if (result.status !== "fulfilled") continue;
+              const judgeOutput = result.value;
+              const paraReport = candidatesForJudge[j];
+
+              const fused = Math.round(
+                paraReport.riskScore * 0.4 + judgeOutput.riskScore0to100 * 0.6
+              );
+              paraReport.riskScore = Math.min(100, Math.max(0, fused));
+              paraReport.riskLevel =
+                paraReport.riskScore >= 70 ? "high" : paraReport.riskScore >= 35 ? "medium" : "low";
+
+              if (judgeOutput.topReasons?.length) {
+                paraReport.signals.push({
+                  signalId: "llm_judge_review",
+                  category: "aiPattern",
+                  title: "AI 复核判断",
+                  evidence: judgeOutput.topReasons.slice(0, 3),
+                  suggestion: judgeOutput.shouldRewrite
+                    ? "建议对此段落进行改写以降低 AI 痕迹。"
+                    : "AI 复核认为此段落风险可控。",
+                  score: 0,
+                });
+              }
+            }
+
+            // 重新计算文档整体分（对齐知网标准：AI字符数占比）
+            let aiChars = 0, allChars = 0;
+            for (const r of reportBefore.paragraphReports) {
+              const len = r.text.length;
+              allChars += len;
+              if (r.riskScore >= 35) aiChars += len * (r.riskScore / 100);
+            }
+            reportBefore.overallRiskScore = allChars > 0
+              ? Math.min(100, Math.max(0, Math.round((aiChars / allChars) * 100)))
+              : 0;
+            reportBefore.overallRiskLevel =
+              reportBefore.overallRiskScore >= 70 ? "high" : reportBefore.overallRiskScore >= 35 ? "medium" : "low";
+
+            params.store.update(session.sessionId, { reportBefore });
+            log.info("Background LLM judge completed", {
+              sessionId: session.sessionId,
+              overallScore: reportBefore.overallRiskScore,
+            });
+          } catch (err) {
+            log.error("Background LLM judge failed", { error: String(err) });
+          }
+        })();
+      }
     })
   );
 
