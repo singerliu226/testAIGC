@@ -66,6 +66,19 @@ function normalizeToHttpError(err: unknown): HttpError {
     return new HttpError(400, "INVALID_REQUEST", "请求参数不合法");
   }
 
+  // 兑换码相关业务错误（来自 RedeemCodeStore）
+  if (anyErr?.code === "CODE_NOT_FOUND") {
+    return new HttpError(400, "CODE_NOT_FOUND", anyErr.message || "兑换码不存在");
+  }
+  if (anyErr?.code === "CODE_ALREADY_USED") {
+    return new HttpError(400, "CODE_ALREADY_USED", anyErr.message || "此兑换码已被使用");
+  }
+
+  // 积分不足
+  if (anyErr?.code === "INSUFFICIENT_POINTS") {
+    return new HttpError(402, "INSUFFICIENT_POINTS", "积分不足，请先充值");
+  }
+
   return new HttpError(500, "INTERNAL_ERROR", "服务内部错误");
 }
 

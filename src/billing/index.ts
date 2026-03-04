@@ -1,6 +1,7 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FileLedger } from "./fileLedger.js";
+import { RedeemCodeStore } from "./redeemCode.js";
 
 function resolveDataDir(): string {
   const env = process.env.DATA_DIR?.trim();
@@ -10,7 +11,12 @@ function resolveDataDir(): string {
   return path.resolve(__dirname, "../../data");
 }
 
-export const ledger = new FileLedger({ dataDir: resolveDataDir() });
+const dataDir = resolveDataDir();
+
+export const ledger = new FileLedger({ dataDir });
+
+/** 兑换码仓库单例 */
+export const redeemStore = new RedeemCodeStore({ dataDir });
 
 export function getAccountIdFromRequestHeader(headerVal: unknown): string {
   const v = typeof headerVal === "string" ? headerVal.trim() : "";

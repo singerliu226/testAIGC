@@ -218,6 +218,34 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .history-table th{text-align:left;padding:8px 10px;background:var(--g50);font-size:12px;color:var(--g500);border-bottom:1px solid var(--g200)}
 .history-table td{padding:8px 10px;border-bottom:1px solid var(--g100)}
 
+/* ── pricing modal ── */
+.pricing-packages{display:flex;gap:12px;flex-wrap:wrap;margin:16px 0}
+.pkg-card{flex:1;min-width:120px;border:2px solid var(--g200);border-radius:12px;padding:16px 12px;text-align:center;transition:.2s;position:relative;background:white}
+.pkg-card.hot{border-color:var(--pri);background:var(--pri-l)}
+.pkg-badge{position:absolute;top:-11px;left:50%;transform:translateX(-50%);background:var(--pri);color:white;font-size:10px;font-weight:700;padding:2px 10px;border-radius:999px;white-space:nowrap}
+.pkg-name{font-size:12px;color:var(--g500);margin-bottom:6px;font-weight:500}
+.pkg-price{font-size:26px;font-weight:800;color:var(--g900);line-height:1.1}
+.pkg-price sup{font-size:14px;font-weight:700;vertical-align:top;margin-top:4px;display:inline-block}
+.pkg-points{font-size:12px;font-weight:600;color:var(--pri);margin-top:6px}
+.pkg-desc{font-size:11px;color:var(--g400);margin-top:4px;line-height:1.5}
+.pkg-sep{font-size:11px;color:var(--g300);text-align:center;margin:8px 0;position:relative}
+.pkg-sep::before,.pkg-sep::after{content:"";position:absolute;top:50%;width:40%;height:1px;background:var(--g200)}
+.pkg-sep::before{left:0}.pkg-sep::after{right:0}
+.buy-steps{margin:4px 0 8px;padding:12px 14px;background:var(--g50);border-radius:10px;border:1px solid var(--g100)}
+.buy-step{display:flex;align-items:flex-start;gap:8px;padding:4px 0;font-size:13px;color:var(--g700)}
+.step-num{width:20px;height:20px;border-radius:50%;background:var(--pri);color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.qr-hint{display:flex;align-items:center;gap:12px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;margin:10px 0;font-size:12px;color:var(--g700)}
+.qr-hint-icon{font-size:22px;flex-shrink:0}
+.redeem-section{margin-top:16px;padding-top:16px;border-top:1px solid var(--g200)}
+.redeem-section h4{font-size:14px;font-weight:600;margin-bottom:4px;display:flex;align-items:center;gap:6px}
+.redeem-section p{font-size:12px;color:var(--g500);margin-bottom:8px}
+.redeem-input-row{display:flex;gap:8px}
+.redeem-input{flex:1;padding:9px 12px;border:1.5px solid var(--g200);border-radius:8px;font-size:15px;font-family:var(--font-mono);text-transform:uppercase;letter-spacing:2px;outline:none;transition:.15s}
+.redeem-input:focus{border-color:var(--pri)}
+.free-banner{display:flex;align-items:center;gap:8px;padding:8px 14px;background:#ecfdf5;border:1px solid #a7f3d0;border-radius:8px;margin-top:12px;font-size:12px;color:#059669;flex-wrap:wrap}
+.free-banner strong{font-weight:700}
+.free-banner-sep{color:#a7f3d0;margin:0 4px}
+
 /* ── responsive ── */
 @media(max-width:640px){
   .container{padding:12px}
@@ -323,6 +351,14 @@ body.sidebar-open .action-bar{margin-right:400px}
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
           上传并生成检测报告
         </button>
+      </div>
+      <div class="free-banner">
+        <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
+        <span><strong>首次检测完全免费</strong>，无需注册</span>
+        <span class="free-banner-sep">|</span>
+        <span>新用户赠送 <strong id="freePtsHint">50</strong> 积分用于改写降AI率</span>
+        <span class="free-banner-sep">|</span>
+        <span>积分不够随时购买</span>
       </div>
       <div class="progress-wrap" id="uploadProgress"><div class="progress-bar" id="uploadProgressBar" style="width:0%"></div></div>
     </div>
@@ -470,6 +506,81 @@ body.sidebar-open .action-bar{margin-right:400px}
     <div id="verifyPanel" class="verify-panel hidden"></div>
     <div class="modal-body">
       <div class="preview-content" id="previewContent"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ PRICING MODAL ══════ -->
+<div class="modal-overlay" id="pricingModal">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header">
+      购买积分
+      <button class="icon-btn" id="pricingClose">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:20px">
+
+      <div class="pricing-packages" id="pkgGrid">
+        <div class="pkg-card" data-pkg="lite">
+          <div class="pkg-name">体验包</div>
+          <div class="pkg-price"><sup>¥</sup>9.9</div>
+          <div class="pkg-points">100 积分</div>
+          <div class="pkg-desc">约 2 万字改写<br>适合单章节</div>
+        </div>
+        <div class="pkg-card hot" data-pkg="base">
+          <div class="pkg-badge">最受欢迎</div>
+          <div class="pkg-name">基础包</div>
+          <div class="pkg-price"><sup>¥</sup>29.9</div>
+          <div class="pkg-points">400 积分</div>
+          <div class="pkg-desc">约 8 万字改写<br>够一篇硕士论文</div>
+        </div>
+        <div class="pkg-card" data-pkg="pro">
+          <div class="pkg-name">旗舰包</div>
+          <div class="pkg-price"><sup>¥</sup>79.9</div>
+          <div class="pkg-points">1200 积分</div>
+          <div class="pkg-desc">约 24 万字改写<br>多稿反复修改</div>
+        </div>
+      </div>
+
+      <div class="buy-steps">
+        <div class="buy-step">
+          <div class="step-num">1</div>
+          <div>选择套餐后，截图或复制价格，通过下方联系方式告知我购买哪个套餐</div>
+        </div>
+        <div class="buy-step">
+          <div class="step-num">2</div>
+          <div>付款后将截图发送给我，我会在 <strong>10分钟内</strong> 给你发送专属兑换码</div>
+        </div>
+        <div class="buy-step">
+          <div class="step-num">3</div>
+          <div>在下方输入兑换码，积分自动到账，立即可用</div>
+        </div>
+      </div>
+
+      <div class="qr-hint">
+        <div class="qr-hint-icon">📱</div>
+        <div>
+          <div style="font-weight:600;margin-bottom:2px">联系购买</div>
+          <div>微信：<strong id="contactWechat" style="color:var(--pri)">（请联系管理员获取）</strong>
+          &nbsp;·&nbsp; 小红书私信同名账号</div>
+        </div>
+      </div>
+
+      <div class="redeem-section">
+        <h4>
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
+          已有兑换码？立即兑换
+        </h4>
+        <p>输入购买后收到的 8 位兑换码，积分即刻到账</p>
+        <div class="redeem-input-row">
+          <input class="redeem-input" id="redeemInput" placeholder="例：ABCD1234" maxlength="10" autocomplete="off" />
+          <button class="btn btn-primary" id="redeemBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12V22H4V12"/><path d="M22 7H2v5h20V7z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg>
+            兑换
+          </button>
+        </div>
+        <div id="redeemResult" style="margin-top:8px;font-size:13px;display:none"></div>
+      </div>
+
     </div>
   </div>
 </div>
@@ -910,7 +1021,64 @@ rewriteBtn.addEventListener("click",async()=>{
 });
 
 cancelBtn.addEventListener("click",()=>{queue.cancelled=true;cancelBtn.disabled=true;log({message:"正在取消…"})});
-topupBtn.addEventListener("click",async()=>{const v=prompt("充值积分（测试用）","100");if(!v)return;const n=Number(v);if(!Number.isFinite(n)||n<=0)return alert("请输入正整数");const json=await doTopup(Math.floor(n));if(!json.ok)return log(json);balanceEl.textContent=String(json.balance);log(json)});
+// ── 定价弹窗 ──
+const pricingModal=$("pricingModal"),pricingClose=$("pricingClose"),redeemInput=$("redeemInput"),redeemBtn=$("redeemBtn"),redeemResult=$("redeemResult");
+
+/**
+ * 打开购买积分弹窗，替换旧的 prompt() 充值入口。
+ * 采用"先付款→发码→用户兑换"模式，适配小红书等无支付接口的销售渠道。
+ */
+topupBtn.addEventListener("click",()=>pricingModal.classList.add("open"));
+pricingClose.addEventListener("click",()=>pricingModal.classList.remove("open"));
+pricingModal.addEventListener("click",e=>{if(e.target===pricingModal)pricingModal.classList.remove("open")});
+
+// 套餐卡片高亮（仅视觉辅助，无实际购买逻辑，购买需联系管理员）
+$("pkgGrid").addEventListener("click",e=>{
+  const card=e.target.closest("[data-pkg]");
+  if(!card)return;
+  $("pkgGrid").querySelectorAll(".pkg-card").forEach(c=>c.classList.remove("hot"));
+  card.classList.add("hot");
+});
+
+// 兑换码格式化：自动转大写、去空格
+redeemInput.addEventListener("input",()=>{
+  const raw=redeemInput.value.replace(/\s+/g,"").toUpperCase();
+  redeemInput.value=raw;
+  redeemResult.style.display="none";
+});
+
+redeemInput.addEventListener("keydown",e=>{if(e.key==="Enter")redeemBtn.click()});
+
+/** 兑换码核销：调用 POST /api/billing/redeem，成功后刷新余额并关闭弹窗 */
+redeemBtn.addEventListener("click",async()=>{
+  const code=redeemInput.value.trim();
+  if(!code){redeemInput.focus();return}
+  if(code.length<4){redeemResult.style.display="block";redeemResult.style.color="var(--err)";redeemResult.textContent="请输入完整的兑换码（8位）";return}
+  redeemBtn.disabled=true;redeemBtn.textContent="兑换中…";
+  try{
+    const res=await fetch("/api/billing/redeem",{method:"POST",headers:getHeaders(),body:JSON.stringify({code})});
+    const json=await res.json();
+    if(json.ok){
+      redeemResult.style.display="block";
+      redeemResult.style.color="var(--ok)";
+      redeemResult.textContent=`兑换成功！到账 ${json.points} 积分（${json.packageName}），当前余额 ${json.balance} 积分`;
+      balanceEl.textContent=String(json.balance);
+      redeemInput.value="";
+      showToast(`积分到账！+${json.points} 积分，余额 ${json.balance}`,"ok",4000);
+    }else{
+      redeemResult.style.display="block";
+      redeemResult.style.color="var(--err)";
+      redeemResult.textContent=json.error?.message||"兑换失败，请检查兑换码是否正确";
+    }
+  }catch(e){
+    redeemResult.style.display="block";
+    redeemResult.style.color="var(--err)";
+    redeemResult.textContent="网络错误，请重试";
+  }finally{
+    redeemBtn.disabled=false;
+    redeemBtn.innerHTML=`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12V22H4V12"/><path d="M22 7H2v5h20V7z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg> 兑换`;
+  }
+});
 
 historyBtn.addEventListener("click",async()=>{
   historyModal.classList.add("open");historyBody.innerHTML=`<tr><td colspan="4" style="color:var(--g400)">加载中…</td></tr>`;
@@ -1301,8 +1469,22 @@ adminBadge.addEventListener("click",()=>{
 
 (async function init(){
   updateAdminUI();
-  if(!adminSecret){
-    try{const b=await fetchBalance();if(b.ok)balanceEl.textContent=String(b.balance)}catch{}
+  // 并行拉取余额和站点配置（含微信联系方式、默认免费积分）
+  const [balanceRes, configRes] = await Promise.allSettled([
+    fetchBalance(),
+    fetch("/api/config").then(r=>r.json()),
+  ]);
+  if(balanceRes.status==="fulfilled"&&balanceRes.value?.ok){
+    balanceEl.textContent=String(balanceRes.value.balance);
+  }
+  if(configRes.status==="fulfilled"&&configRes.value?.ok){
+    const cfg=configRes.value;
+    // 更新定价弹窗中的联系微信
+    const wechatEl=$("contactWechat");
+    if(wechatEl&&cfg.contactWechat)wechatEl.textContent=cfg.contactWechat;
+    // 更新首页免费积分提示
+    const freePtsEl=$("freePtsHint");
+    if(freePtsEl&&cfg.defaultFreePoints)freePtsEl.textContent=String(cfg.defaultFreePoints);
   }
 })();
 </script>

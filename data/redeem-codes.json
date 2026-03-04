@@ -1,0 +1,27 @@
+{
+  "codes": [
+    {
+      "code": "46DCQ97E",
+      "points": 100,
+      "createdAt": 1772615959708,
+      "packageName": "体验包 ¥9.9",
+      "used": true,
+      "usedAt": 1772615965559,
+      "usedBy": "test-user-001"
+    },
+    {
+      "code": "64486PVP",
+      "points": 100,
+      "createdAt": 1772615959708,
+      "packageName": "体验包 ¥9.9",
+      "used": false
+    },
+    {
+      "code": "JWPBMY6J",
+      "points": 100,
+      "createdAt": 1772615959708,
+      "packageName": "体验包 ¥9.9",
+      "used": false
+    }
+  ]
+}

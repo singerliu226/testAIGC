@@ -61,9 +61,36 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .toast-err{background:var(--err);color:white}
 
 .stat-row{display:flex;gap:16px;margin-bottom:20px;flex-wrap:wrap}
-.stat-card{flex:1;min-width:160px;background:white;border:1px solid var(--g200);border-radius:var(--radius);padding:16px 20px}
+.stat-card{flex:1;min-width:140px;background:white;border:1px solid var(--g200);border-radius:var(--radius);padding:16px 20px}
 .stat-card .label{font-size:12px;color:var(--g500);margin-bottom:4px}
 .stat-card .value{font-size:24px;font-weight:700;font-family:var(--font-mono);color:var(--g900)}
+
+/* 兑换码生成区 */
+.pkg-row{display:flex;gap:10px;flex-wrap:wrap;margin-bottom:16px}
+.pkg-btn{flex:1;min-width:120px;padding:12px 8px;border:2px solid var(--g200);border-radius:10px;background:white;cursor:pointer;text-align:center;transition:.2s;font-family:inherit}
+.pkg-btn:hover,.pkg-btn.sel{border-color:var(--pri);background:var(--pri-l)}
+.pkg-btn .pb-name{font-size:12px;color:var(--g500);margin-bottom:2px}
+.pkg-btn .pb-price{font-size:16px;font-weight:800;color:var(--g900)}
+.pkg-btn .pb-pts{font-size:11px;color:var(--pri);font-weight:600;margin-top:2px}
+.gen-row{display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap;margin-top:8px}
+.form-group{display:flex;flex-direction:column;gap:4px}
+.form-label{font-size:12px;color:var(--g500);font-weight:500}
+.form-input{padding:8px 12px;border:1px solid var(--g200);border-radius:8px;font-size:13px;font-family:var(--font-mono);outline:none;transition:.15s;width:80px;text-align:center}
+.form-input:focus{border-color:var(--pri)}
+.code-output{background:var(--g50);border:1px solid var(--g200);border-radius:8px;padding:12px 14px;font-family:var(--font-mono);font-size:13px;max-height:180px;overflow-y:auto;white-space:pre-wrap;word-break:break-all;line-height:1.8;display:none;margin-top:12px}
+.code-output.show{display:block}
+/* 兑换码列表 */
+.code-table{width:100%;border-collapse:collapse;font-size:12px}
+.code-table th{text-align:left;padding:8px 10px;background:var(--g50);color:var(--g500);font-size:11px;font-weight:600;border-bottom:1px solid var(--g200)}
+.code-table td{padding:7px 10px;border-bottom:1px solid var(--g100);font-family:var(--font-mono)}
+.code-table tr:hover td{background:var(--g50)}
+.pill-used{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;font-family:var(--font-sans)}
+.pill-used.yes{background:#fef2f2;color:var(--err)}
+.pill-used.no{background:#ecfdf5;color:var(--ok)}
+.tab-bar{display:flex;gap:0;border-bottom:1px solid var(--g200);margin-bottom:0}
+.tab-item{padding:10px 18px;font-size:13px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;color:var(--g500);transition:.15s}
+.tab-item.active{color:var(--pri);border-color:var(--pri)}
+.tab-panel{display:none}.tab-panel.active{display:block}
 </style>
 </head>
 <body>
@@ -90,22 +117,99 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 <div class="container" id="mainPanel" style="display:none">
   <div class="stat-row" id="stats">
     <div class="stat-card"><div class="label">总账号数</div><div class="value" id="statTotal">-</div></div>
-    <div class="stat-card"><div class="label">总积分余额</div><div class="value" id="statBalance">-</div></div>
+    <div class="stat-card"><div class="label">平台总积分</div><div class="value" id="statBalance">-</div></div>
+    <div class="stat-card"><div class="label">兑换码（未用/总数）</div><div class="value" id="statCodes">-</div></div>
   </div>
 
-  <div class="card">
-    <div class="card-header">
-      <span>账号管理</span>
-      <button class="btn btn-outline btn-sm" id="refreshBtn">刷新</button>
-    </div>
-    <div class="card-body" style="padding:0">
-      <table class="acc-table">
-        <thead><tr><th>账号 ID</th><th>当前积分</th><th>创建时间</th><th>充值</th></tr></thead>
-        <tbody id="accBody"></tbody>
-      </table>
-      <div class="empty hidden" id="emptyAccounts">暂无任何账号</div>
+  <!-- Tab 导航 -->
+  <div class="tab-bar">
+    <div class="tab-item active" data-tab="accounts">账号管理</div>
+    <div class="tab-item" data-tab="codes">兑换码管理</div>
+  </div>
+
+  <!-- Tab: 账号管理 -->
+  <div class="tab-panel active" id="tabAccounts">
+    <div class="card" style="border-top-left-radius:0;border-top-right-radius:0;border-top:none">
+      <div class="card-header">
+        <span>账号列表</span>
+        <button class="btn btn-outline btn-sm" id="refreshBtn">刷新</button>
+      </div>
+      <div class="card-body" style="padding:0">
+        <table class="acc-table">
+          <thead><tr><th>账号 ID</th><th>当前积分</th><th>创建时间</th><th>手动充值</th></tr></thead>
+          <tbody id="accBody"></tbody>
+        </table>
+        <div class="empty hidden" id="emptyAccounts">暂无任何账号</div>
+      </div>
     </div>
   </div>
+
+  <!-- Tab: 兑换码管理 -->
+  <div class="tab-panel" id="tabCodes">
+    <div class="card" style="border-top-left-radius:0;border-top-right-radius:0;border-top:none">
+      <div class="card-header">
+        <span>批量生成兑换码</span>
+        <span style="font-size:12px;color:var(--g400)">生成后通过小红书私信等方式发给付款用户</span>
+      </div>
+      <div class="card-body">
+        <div style="font-size:13px;font-weight:600;color:var(--g700);margin-bottom:8px">选择套餐</div>
+        <div class="pkg-row" id="pkgSelector">
+          <button class="pkg-btn sel" data-pts="100" data-name="体验包 ¥9.9">
+            <div class="pb-name">体验包</div>
+            <div class="pb-price">¥9.9</div>
+            <div class="pb-pts">100 积分</div>
+          </button>
+          <button class="pkg-btn" data-pts="400" data-name="基础包 ¥29.9">
+            <div class="pb-name">基础包</div>
+            <div class="pb-price">¥29.9</div>
+            <div class="pb-pts">400 积分</div>
+          </button>
+          <button class="pkg-btn" data-pts="1200" data-name="旗舰包 ¥79.9">
+            <div class="pb-name">旗舰包</div>
+            <div class="pb-price">¥79.9</div>
+            <div class="pb-pts">1200 积分</div>
+          </button>
+        </div>
+        <div class="gen-row">
+          <div class="form-group">
+            <div class="form-label">生成数量</div>
+            <input class="form-input" id="genCount" type="number" min="1" max="200" value="10" />
+          </div>
+          <button class="btn btn-primary" id="genCodesBtn">
+            <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg>
+            生成兑换码
+          </button>
+          <button class="btn btn-outline btn-sm" id="copyCodesBtn" style="display:none">
+            <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+            复制全部
+          </button>
+        </div>
+        <div class="code-output" id="codeOutput"></div>
+      </div>
+    </div>
+
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <span>兑换码记录</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <select id="codeFilter" style="padding:4px 8px;border:1px solid var(--g200);border-radius:6px;font-size:12px;color:var(--g700)">
+            <option value="all">全部</option>
+            <option value="unused">未使用</option>
+            <option value="used">已使用</option>
+          </select>
+          <button class="btn btn-outline btn-sm" id="refreshCodesBtn">刷新</button>
+        </div>
+      </div>
+      <div style="overflow-x:auto">
+        <table class="code-table">
+          <thead><tr><th>兑换码</th><th>套餐</th><th>积分</th><th>状态</th><th>使用者</th><th>使用时间</th></tr></thead>
+          <tbody id="codesBody"></tbody>
+        </table>
+        <div class="empty hidden" id="emptyCodes" style="padding:24px;text-align:center;color:var(--g400);font-size:13px">暂无兑换码记录</div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <div class="toast" id="toast"></div>
@@ -114,10 +218,14 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 const $=id=>document.getElementById(id);
 const loginWrap=$("loginWrap"),mainPanel=$("mainPanel"),secretInput=$("secretInput"),loginBtn=$("loginBtn");
 const accBody=$("accBody"),emptyAccounts=$("emptyAccounts"),refreshBtn=$("refreshBtn");
-const statTotal=$("statTotal"),statBalance=$("statBalance"),toastEl=$("toast");
+const statTotal=$("statTotal"),statBalance=$("statBalance"),statCodes=$("statCodes"),toastEl=$("toast");
+const pkgSelector=$("pkgSelector"),genCount=$("genCount"),genCodesBtn=$("genCodesBtn"),codeOutput=$("codeOutput"),copyCodesBtn=$("copyCodesBtn");
+const codesBody=$("codesBody"),emptyCodes=$("emptyCodes"),refreshCodesBtn=$("refreshCodesBtn"),codeFilter=$("codeFilter");
 
 const adminSecretKey="aigc_admin_secret";
 let secret=localStorage.getItem(adminSecretKey)||"";
+let selectedPkg={pts:100,name:"体验包 ¥9.9"};
+let lastGeneratedCodes=[];
 
 function showToast(msg,type,dur){
   toastEl.textContent=msg;toastEl.className="toast toast-"+(type||"ok")+" show";
@@ -125,10 +233,36 @@ function showToast(msg,type,dur){
 }
 
 function shortenId(id){
-  if(id.length<=20)return id;
+  if(!id||id.length<=20)return id;
   return id.slice(0,8)+"…"+id.slice(-6);
 }
 
+function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+
+function adminHeaders(){return{"Content-Type":"application/json","x-admin-secret":secret}}
+
+// ── Tab 切换 ──
+document.querySelectorAll(".tab-item").forEach(tab=>{
+  tab.addEventListener("click",()=>{
+    document.querySelectorAll(".tab-item").forEach(t=>t.classList.remove("active"));
+    document.querySelectorAll(".tab-panel").forEach(p=>p.classList.remove("active"));
+    tab.classList.add("active");
+    const panel=$("tab"+tab.dataset.tab.charAt(0).toUpperCase()+tab.dataset.tab.slice(1));
+    if(panel)panel.classList.add("active");
+    if(tab.dataset.tab==="codes")loadCodes();
+  });
+});
+
+// ── 套餐选择 ──
+pkgSelector.addEventListener("click",e=>{
+  const btn=e.target.closest("[data-pts]");
+  if(!btn)return;
+  pkgSelector.querySelectorAll(".pkg-btn").forEach(b=>b.classList.remove("sel"));
+  btn.classList.add("sel");
+  selectedPkg={pts:Number(btn.dataset.pts),name:btn.dataset.name};
+});
+
+// ── 登录 ──
 async function verifyAndEnter(){
   const s=secretInput.value.trim();
   if(!s){secretInput.focus();return}
@@ -142,25 +276,34 @@ async function verifyAndEnter(){
   }catch(e){showToast("验证失败","err")}
 }
 
+// ── 加载账号 ──
 async function loadAccounts(){
   try{
-    const res=await fetch("/api/admin/accounts",{headers:{"x-admin-secret":secret}});
-    const json=await res.json();
-    if(!json.ok){showToast(json.error?.message||"加载失败","err");return}
-    const accs=json.accounts||[];
+    const [accRes,codeRes]=await Promise.all([
+      fetch("/api/admin/accounts",{headers:adminHeaders()}),
+      fetch("/api/admin/codes",{headers:adminHeaders()}),
+    ]);
+    const accJson=await accRes.json();
+    const codeJson=await codeRes.json();
+
+    if(!accJson.ok){showToast(accJson.error?.message||"加载失败","err");return}
+    const accs=accJson.accounts||[];
     statTotal.textContent=String(accs.length);
     statBalance.textContent=String(accs.reduce((s,a)=>s+a.balance,0));
 
+    if(codeJson.ok&&codeJson.stats){
+      statCodes.textContent=`${codeJson.stats.unused} / ${codeJson.stats.total}`;
+    }
+
     if(!accs.length){accBody.innerHTML="";emptyAccounts.classList.remove("hidden");return}
     emptyAccounts.classList.add("hidden");
-
     accs.sort((a,b)=>b.updatedAt-a.updatedAt);
     accBody.innerHTML=accs.map(a=>{
       const dt=new Date(a.createdAt).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
       return `<tr>
-        <td title="${esc(a.accountId)}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${esc(shortenId(a.accountId))}</td>
+        <td title="${esc(a.accountId)}" style="max-width:200px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;font-family:var(--font-mono);font-size:12px">${esc(shortenId(a.accountId))}</td>
         <td><span class="balance-num">${a.balance}</span></td>
-        <td style="color:var(--g400)">${esc(dt)}</td>
+        <td style="color:var(--g400);font-family:var(--font-sans)">${esc(dt)}</td>
         <td style="white-space:nowrap">
           <input class="topup-input" data-acc="${esc(a.accountId)}" type="number" min="1" value="100" />
           <button class="btn btn-ok btn-sm" data-topup="${esc(a.accountId)}">充值</button>
@@ -170,8 +313,72 @@ async function loadAccounts(){
   }catch(e){showToast("网络错误","err")}
 }
 
-function esc(s){const d=document.createElement("div");d.textContent=s;return d.innerHTML}
+// ── 加载兑换码列表 ──
+async function loadCodes(){
+  try{
+    const res=await fetch("/api/admin/codes",{headers:adminHeaders()});
+    const json=await res.json();
+    if(!json.ok){showToast("加载失败","err");return}
+    const filter=codeFilter.value;
+    let codes=json.codes||[];
+    if(filter==="unused")codes=codes.filter(c=>!c.used);
+    else if(filter==="used")codes=codes.filter(c=>c.used);
 
+    if(json.stats)statCodes.textContent=`${json.stats.unused} / ${json.stats.total}`;
+
+    if(!codes.length){codesBody.innerHTML="";emptyCodes.classList.remove("hidden");return}
+    emptyCodes.classList.add("hidden");
+    codesBody.innerHTML=codes.map(c=>{
+      const dt=c.usedAt?new Date(c.usedAt).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"}):"-";
+      return `<tr>
+        <td style="font-weight:700;letter-spacing:1px;color:var(--g900)">${esc(c.code)}</td>
+        <td style="font-family:var(--font-sans);color:var(--g500)">${esc(c.packageName||"-")}</td>
+        <td style="color:var(--pri)">${c.points}</td>
+        <td><span class="pill-used ${c.used?"yes":"no"}">${c.used?"已使用":"未使用"}</span></td>
+        <td style="max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(c.usedBy||"")}">${c.usedBy?esc(shortenId(c.usedBy)):"-"}</td>
+        <td style="color:var(--g400);font-family:var(--font-sans)">${esc(dt)}</td>
+      </tr>`;
+    }).join("");
+  }catch(e){showToast("网络错误","err")}
+}
+
+// ── 生成兑换码 ──
+genCodesBtn.addEventListener("click",async()=>{
+  const count=parseInt(genCount.value)||10;
+  if(count<1||count>200){showToast("数量需在 1~200 之间","err");return}
+  genCodesBtn.disabled=true;genCodesBtn.textContent="生成中…";
+  try{
+    const res=await fetch("/api/admin/generate-codes",{
+      method:"POST",headers:adminHeaders(),
+      body:JSON.stringify({packageName:selectedPkg.name,points:selectedPkg.pts,count}),
+    });
+    const json=await res.json();
+    if(!json.ok){showToast(json.error?.message||"生成失败","err");return}
+    lastGeneratedCodes=json.codes||[];
+    codeOutput.textContent=lastGeneratedCodes.join("\n");
+    codeOutput.classList.add("show");
+    copyCodesBtn.style.display="inline-flex";
+    showToast(`成功生成 ${lastGeneratedCodes.length} 个兑换码（${selectedPkg.name}，${selectedPkg.pts}积分/码）`,"ok",5000);
+    if(json.stats)statCodes.textContent=`${json.stats.unused} / ${json.stats.total}`;
+  }catch(e){showToast("网络错误","err")}finally{
+    genCodesBtn.disabled=false;
+    genCodesBtn.innerHTML=`<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg> 生成兑换码`;
+  }
+});
+
+// ── 复制全部兑换码 ──
+copyCodesBtn.addEventListener("click",async()=>{
+  if(!lastGeneratedCodes.length)return;
+  try{
+    await navigator.clipboard.writeText(lastGeneratedCodes.join("\n"));
+    showToast("已复制 "+lastGeneratedCodes.length+" 个兑换码到剪贴板","ok",3000);
+  }catch(e){showToast("复制失败，请手动选取","err")}
+});
+
+codeFilter.addEventListener("change",loadCodes);
+refreshCodesBtn.addEventListener("click",loadCodes);
+
+// ── 账号充值 ──
 loginBtn.addEventListener("click",verifyAndEnter);
 secretInput.addEventListener("keydown",e=>{if(e.key==="Enter")verifyAndEnter()});
 refreshBtn.addEventListener("click",loadAccounts);
@@ -185,11 +392,7 @@ accBody.addEventListener("click",async e=>{
   if(!pts||pts<1){showToast("请输入有效积分数","err");return}
   btn.disabled=true;btn.textContent="充值中…";
   try{
-    const res=await fetch("/api/admin/topup",{
-      method:"POST",
-      headers:{"Content-Type":"application/json","x-admin-secret":secret},
-      body:JSON.stringify({accountId:accId,points:pts}),
-    });
+    const res=await fetch("/api/admin/topup",{method:"POST",headers:adminHeaders(),body:JSON.stringify({accountId:accId,points:pts})});
     const json=await res.json();
     if(!json.ok){showToast(json.error?.message||"充值失败","err");return}
     showToast(`已为 ${shortenId(accId)} 充值 ${pts} 积分，当前余额 ${json.balance}`,"ok",4000);
@@ -199,7 +402,7 @@ accBody.addEventListener("click",async e=>{
   }
 });
 
-// 自动登录
+// ── 自动登录 ──
 if(secret){
   loginWrap.style.display="none";mainPanel.style.display="block";
   loadAccounts();
