@@ -16,10 +16,16 @@ import {
   listAllAccounts,
   ledger,
   redeemStore,
+  auditLog,
 } from "../../billing/index.js";
 import { HttpError } from "../errors.js";
 import type { SessionStore } from "../sessionStore.js";
 import { asyncHandler } from "./asyncHandler.js";
+import {
+  adminLoginLimiter,
+  adminActionLimiter,
+  uploadLimiter,
+} from "../rateLimit.js";
 import { z } from "zod";
 
 /**
@@ -122,6 +128,7 @@ export function createApiRouter(params: {
 
   router.post(
     "/upload",
+    uploadLimiter,
     upload.single("file"),
     asyncHandler(async (req, res) => {
       const log = req.log ?? params.logger;
@@ -663,17 +670,28 @@ export function createApiRouter(params: {
   );
 
   // ══════════════════════════════════════════════════════
-  // 管理员 API
+  // 管理员 API（所有端点均带限流 + 操作审计）
   // ══════════════════════════════════════════════════════
 
-  /** 验证管理员密钥 */
+  /**
+   * 验证管理员密钥。
+   * 使用 adminLoginLimiter：每 IP 每 15 分钟最多 10 次尝试，防暴力破解。
+   */
   router.post(
     "/admin/verify",
+    adminLoginLimiter,
     asyncHandler(async (req, res) => {
+      const clientIp = req.headers["x-forwarded-for"]
+        ? String(req.headers["x-forwarded-for"]).split(",")[0].trim()
+        : (req.socket.remoteAddress ?? "unknown");
+
       const body = z.object({ secret: z.string().min(1) }).parse(req.body);
       if (!verifyAdminSecret(body.secret)) {
+        auditLog.record(clientIp, "ADMIN_LOGIN_FAILED", {});
         throw new HttpError(403, "INVALID_SECRET", "管理员密钥错误");
       }
+
+      auditLog.record(clientIp, "ADMIN_LOGIN_SUCCESS", {});
       res.json({ ok: true });
     })
   );
@@ -681,6 +699,7 @@ export function createApiRouter(params: {
   /** 获取所有账号列表（需管理员密钥） */
   router.get(
     "/admin/accounts",
+    adminActionLimiter,
     asyncHandler(async (req, res) => {
       if (!isAdminRequest(req.header("x-admin-secret"))) {
         throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
@@ -690,13 +709,18 @@ export function createApiRouter(params: {
     })
   );
 
-  /** 管理员为指定账号充值 */
+  /** 管理员为指定账号充值（记录审计日志） */
   router.post(
     "/admin/topup",
+    adminActionLimiter,
     asyncHandler(async (req, res) => {
       if (!isAdminRequest(req.header("x-admin-secret"))) {
         throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
       }
+      const clientIp = req.headers["x-forwarded-for"]
+        ? String(req.headers["x-forwarded-for"]).split(",")[0].trim()
+        : (req.socket.remoteAddress ?? "unknown");
+
       const body = z.object({
         accountId: z.string().min(1),
         points: z.number().int().min(1).max(1000000),
@@ -704,6 +728,14 @@ export function createApiRouter(params: {
 
       ledger.ensureAccount(body.accountId, 0);
       const tx = ledger.topup(body.accountId, body.points, { source: "admin" });
+
+      auditLog.record(clientIp, "ADMIN_TOPUP", {
+        accountId: body.accountId,
+        points: body.points,
+        newBalance: ledger.getBalance(body.accountId),
+        txId: tx.txId,
+      });
+
       res.json({
         ok: true,
         accountId: body.accountId,
@@ -714,16 +746,20 @@ export function createApiRouter(params: {
   );
 
   /**
-   * 管理员批量生成兑换码。
-   * 运营流程：管理员在后台按套餐生成一批码 → 用户通过小红书等渠道付款 →
-   * 管理员私信发码 → 用户在产品内兑换。
+   * 管理员批量生成兑换码（记录审计日志）。
+   * 生成后通过小红书私信等渠道发给付款用户。
    */
   router.post(
     "/admin/generate-codes",
+    adminActionLimiter,
     asyncHandler(async (req, res) => {
       if (!isAdminRequest(req.header("x-admin-secret"))) {
         throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
       }
+      const clientIp = req.headers["x-forwarded-for"]
+        ? String(req.headers["x-forwarded-for"]).split(",")[0].trim()
+        : (req.socket.remoteAddress ?? "unknown");
+
       const body = z.object({
         packageName: z.string().min(1).max(50),
         points: z.number().int().min(1).max(1000000),
@@ -731,6 +767,13 @@ export function createApiRouter(params: {
       }).parse(req.body);
 
       const codes = redeemStore.generate(body.packageName, body.points, body.count);
+
+      auditLog.record(clientIp, "GENERATE_CODES", {
+        packageName: body.packageName,
+        points: body.points,
+        count: codes.length,
+      });
+
       res.json({
         ok: true,
         generated: codes.length,
@@ -743,6 +786,7 @@ export function createApiRouter(params: {
   /** 管理员查看所有兑换码及核销状态 */
   router.get(
     "/admin/codes",
+    adminActionLimiter,
     asyncHandler(async (req, res) => {
       if (!isAdminRequest(req.header("x-admin-secret"))) {
         throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
@@ -750,6 +794,24 @@ export function createApiRouter(params: {
       const allCodes = redeemStore.listAll();
       const stats = redeemStore.stats();
       res.json({ ok: true, stats, codes: allCodes });
+    })
+  );
+
+  /**
+   * 管理员查看操作审计日志。
+   * 记录了所有登录尝试、充值、生成码等操作，含 IP 和时间戳。
+   */
+  router.get(
+    "/admin/audit",
+    adminActionLimiter,
+    asyncHandler(async (req, res) => {
+      if (!isAdminRequest(req.header("x-admin-secret"))) {
+        throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
+      }
+      const limit = Math.min(200, Number(req.query["limit"] ?? "100"));
+      const entries = auditLog.list(limit);
+      const stats = auditLog.actionStats();
+      res.json({ ok: true, stats, entries });
     })
   );
 

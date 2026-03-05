@@ -1,0 +1,65 @@
+[
+  {
+    "id": "fc766254-635b-4624-ad17-f434e54cbd94",
+    "timestamp": 1772737816356,
+    "ip": "::1",
+    "action": "ADMIN_LOGIN_SUCCESS",
+    "details": {}
+  },
+  {
+    "id": "a5b52b7c-f612-4a70-bb0c-df169ea749dc",
+    "timestamp": 1772737828798,
+    "ip": "::1",
+    "action": "ADMIN_LOGIN_FAILED",
+    "details": {}
+  },
+  {
+    "id": "7b35f5e9-1360-44fb-93cc-242d62ed3f84",
+    "timestamp": 1772737828824,
+    "ip": "::1",
+    "action": "ADMIN_LOGIN_FAILED",
+    "details": {}
+  },
+  {
+    "id": "c2f9d099-9bab-4628-8a0a-93e7ef0b4bb0",
+    "timestamp": 1772737828847,
+    "ip": "::1",
+    "action": "ADMIN_LOGIN_FAILED",
+    "details": {}
+  },
+  {
+    "id": "e9648013-1bd7-48c8-a7e9-df2f59e6e9fc",
+    "timestamp": 1772737828878,
+    "ip": "::1",
+    "action": "ADMIN_LOGIN_FAILED",
+    "details": {}
+  },
+  {
+    "id": "19b5e13f-a437-427d-9e33-4c96a0f003c1",
+    "timestamp": 1772737828923,
+    "ip": "::1",
+    "action": "ADMIN_LOGIN_FAILED",
+    "details": {}
+  },
+  {
+    "id": "bb6d8fe4-026d-4e5f-9cdb-970543a852b4",
+    "timestamp": 1772737828946,
+    "ip": "::1",
+    "action": "ADMIN_LOGIN_FAILED",
+    "details": {}
+  },
+  {
+    "id": "2d568140-591b-493e-bdca-4794cba5db48",
+    "timestamp": 1772737828970,
+    "ip": "::1",
+    "action": "ADMIN_LOGIN_FAILED",
+    "details": {}
+  },
+  {
+    "id": "5b521d29-7beb-4c29-82b1-d77aaaa77463",
+    "timestamp": 1772737828996,
+    "ip": "::1",
+    "action": "ADMIN_LOGIN_FAILED",
+    "details": {}
+  }
+]

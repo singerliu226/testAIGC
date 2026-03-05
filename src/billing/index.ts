@@ -2,6 +2,7 @@ import path from "node:path";
 import { fileURLToPath } from "node:url";
 import { FileLedger } from "./fileLedger.js";
 import { RedeemCodeStore } from "./redeemCode.js";
+import { AdminAuditLog } from "./adminAuditLog.js";
 
 function resolveDataDir(): string {
   const env = process.env.DATA_DIR?.trim();
@@ -17,6 +18,9 @@ export const ledger = new FileLedger({ dataDir });
 
 /** 兑换码仓库单例 */
 export const redeemStore = new RedeemCodeStore({ dataDir });
+
+/** 管理员操作审计日志单例 */
+export const auditLog = new AdminAuditLog({ dataDir });
 
 export function getAccountIdFromRequestHeader(headerVal: unknown): string {
   const v = typeof headerVal === "string" ? headerVal.trim() : "";

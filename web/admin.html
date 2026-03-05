@@ -88,9 +88,21 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .pill-used.yes{background:#fef2f2;color:var(--err)}
 .pill-used.no{background:#ecfdf5;color:var(--ok)}
 .tab-bar{display:flex;gap:0;border-bottom:1px solid var(--g200);margin-bottom:0}
-.tab-item{padding:10px 18px;font-size:13px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;color:var(--g500);transition:.15s}
+.tab-item{padding:10px 18px;font-size:13px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;border-left:none;border-right:none;border-top:none;background:transparent;color:var(--g500);transition:.15s;font-family:inherit}
 .tab-item.active{color:var(--pri);border-color:var(--pri)}
 .tab-panel{display:none}.tab-panel.active{display:block}
+
+/* 审计日志 */
+.audit-table{width:100%;border-collapse:collapse;font-size:12px}
+.audit-table th{text-align:left;padding:8px 10px;background:var(--g50);color:var(--g500);font-size:11px;font-weight:600;border-bottom:1px solid var(--g200)}
+.audit-table td{padding:7px 10px;border-bottom:1px solid var(--g100);font-family:var(--font-mono);color:var(--g700)}
+.audit-table td.action{font-family:var(--font-sans);font-weight:600}
+.audit-badge{display:inline-block;padding:1px 7px;border-radius:999px;font-size:10px;font-weight:600;font-family:var(--font-sans)}
+.badge-ok{background:#ecfdf5;color:#059669}.badge-err{background:#fef2f2;color:#dc2626}
+.badge-warn{background:#fffbeb;color:#d97706}.badge-info{background:#eff6ff;color:#2563eb}
+/* 会话状态栏 */
+.session-bar{display:flex;align-items:center;justify-content:space-between;padding:6px 20px;background:var(--g50);border-bottom:1px solid var(--g200);font-size:12px;color:var(--g500)}
+.session-bar strong{color:var(--g900)}.session-bar .timeout-warn{color:var(--warn);font-weight:600}
 </style>
 </head>
 <body>
@@ -114,6 +126,12 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 </div>
 
 <!-- 主面板 -->
+<div class="session-bar" id="sessionBar" style="display:none">
+  <span>会话登录于 <strong id="sessionLoginTime">-</strong></span>
+  <span id="sessionCountdown"></span>
+  <button class="btn-outline" style="padding:2px 10px;font-size:11px;border-radius:6px;border:1px solid var(--g200);background:white;cursor:pointer;color:var(--g700)" id="logoutBtn">退出登录</button>
+</div>
+
 <div class="container" id="mainPanel" style="display:none">
   <div class="stat-row" id="stats">
     <div class="stat-card"><div class="label">总账号数</div><div class="value" id="statTotal">-</div></div>
@@ -123,8 +141,9 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 
   <!-- Tab 导航 -->
   <div class="tab-bar">
-    <div class="tab-item active" data-tab="accounts">账号管理</div>
-    <div class="tab-item" data-tab="codes">兑换码管理</div>
+    <button class="tab-item active" data-tab="accounts">账号管理</button>
+    <button class="tab-item" data-tab="codes">兑换码管理</button>
+    <button class="tab-item" data-tab="audit">操作审计</button>
   </div>
 
   <!-- Tab: 账号管理 -->
@@ -210,6 +229,27 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
     </div>
   </div>
 
+  <!-- Tab: 操作审计 -->
+  <div class="tab-panel" id="tabAudit">
+    <div class="card" style="border-top-left-radius:0;border-top-right-radius:0;border-top:none">
+      <div class="card-header">
+        <span>操作审计日志</span>
+        <div style="display:flex;gap:8px;align-items:center;font-size:12px;color:var(--g400)">
+          记录最近 100 条管理员操作（含登录尝试、充值、生成码等）
+          <button class="btn btn-outline btn-sm" id="refreshAuditBtn">刷新</button>
+        </div>
+      </div>
+      <div id="auditStats" style="display:flex;gap:8px;flex-wrap:wrap;padding:10px 16px;border-bottom:1px solid var(--g100);background:var(--g50)"></div>
+      <div style="overflow-x:auto">
+        <table class="audit-table">
+          <thead><tr><th>时间</th><th>操作</th><th>IP</th><th>详情</th></tr></thead>
+          <tbody id="auditBody"></tbody>
+        </table>
+        <div class="empty hidden" id="emptyAudit" style="padding:24px;text-align:center;color:var(--g400);font-size:13px">暂无审计记录</div>
+      </div>
+    </div>
+  </div>
+
 </div>
 
 <div class="toast" id="toast"></div>
@@ -221,11 +261,19 @@ const accBody=$("accBody"),emptyAccounts=$("emptyAccounts"),refreshBtn=$("refres
 const statTotal=$("statTotal"),statBalance=$("statBalance"),statCodes=$("statCodes"),toastEl=$("toast");
 const pkgSelector=$("pkgSelector"),genCount=$("genCount"),genCodesBtn=$("genCodesBtn"),codeOutput=$("codeOutput"),copyCodesBtn=$("copyCodesBtn");
 const codesBody=$("codesBody"),emptyCodes=$("emptyCodes"),refreshCodesBtn=$("refreshCodesBtn"),codeFilter=$("codeFilter");
+const auditBody=$("auditBody"),emptyAudit=$("emptyAudit"),refreshAuditBtn=$("refreshAuditBtn"),auditStats=$("auditStats");
+const sessionBar=$("sessionBar"),sessionLoginTime=$("sessionLoginTime"),sessionCountdown=$("sessionCountdown"),logoutBtn=$("logoutBtn");
 
 const adminSecretKey="aigc_admin_secret";
+const adminLoginTimeKey="aigc_admin_login_time";
+// 会话有效期：2小时（毫秒）
+const SESSION_TTL = 2 * 60 * 60 * 1000;
+
 let secret=localStorage.getItem(adminSecretKey)||"";
+let loginTime=Number(localStorage.getItem(adminLoginTimeKey)||"0");
 let selectedPkg={pts:100,name:"体验包 ¥9.9"};
 let lastGeneratedCodes=[];
+let countdownTimer=null;
 
 function showToast(msg,type,dur){
   toastEl.textContent=msg;toastEl.className="toast toast-"+(type||"ok")+" show";
@@ -241,6 +289,44 @@ function esc(s){const d=document.createElement("div");d.textContent=s;return d.i
 
 function adminHeaders(){return{"Content-Type":"application/json","x-admin-secret":secret}}
 
+// ── 会话超时管理 ──
+function startSessionCountdown(){
+  if(countdownTimer)clearInterval(countdownTimer);
+  const dt=new Date(loginTime);
+  sessionLoginTime.textContent=dt.toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit"});
+  sessionBar.style.display="flex";
+  countdownTimer=setInterval(()=>{
+    const remaining=SESSION_TTL-(Date.now()-loginTime);
+    if(remaining<=0){
+      clearInterval(countdownTimer);
+      doLogout("会话已超时（2小时），请重新登录");
+      return;
+    }
+    const mins=Math.floor(remaining/60000);
+    const secs=Math.floor((remaining%60000)/1000);
+    const txt=`${String(mins).padStart(2,"0")}:${String(secs).padStart(2,"0")} 后自动退出`;
+    sessionCountdown.textContent=txt;
+    // 最后10分钟变橙色警告
+    if(remaining<10*60*1000)sessionCountdown.className="timeout-warn";
+    else sessionCountdown.className="";
+  },1000);
+}
+
+function doLogout(msg){
+  clearInterval(countdownTimer);
+  localStorage.removeItem(adminSecretKey);
+  localStorage.removeItem(adminLoginTimeKey);
+  secret="";loginTime=0;
+  mainPanel.style.display="none";
+  sessionBar.style.display="none";
+  loginWrap.style.display="block";
+  secretInput.value="";
+  if(msg)showToast(msg,"warn",5000);
+  secretInput.focus();
+}
+
+logoutBtn.addEventListener("click",()=>doLogout("已退出登录"));
+
 // ── Tab 切换 ──
 document.querySelectorAll(".tab-item").forEach(tab=>{
   tab.addEventListener("click",()=>{
@@ -250,6 +336,7 @@ document.querySelectorAll(".tab-item").forEach(tab=>{
     const panel=$("tab"+tab.dataset.tab.charAt(0).toUpperCase()+tab.dataset.tab.slice(1));
     if(panel)panel.classList.add("active");
     if(tab.dataset.tab==="codes")loadCodes();
+    if(tab.dataset.tab==="audit")loadAudit();
   });
 });
 
@@ -269,11 +356,23 @@ async function verifyAndEnter(){
   try{
     const res=await fetch("/api/admin/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({secret:s})});
     const json=await res.json();
-    if(!json.ok){showToast("密钥错误","err");secretInput.select();return}
-    secret=s;localStorage.setItem(adminSecretKey,s);
+    if(!json.ok){
+      // 检查是否被限流
+      if(json.error?.code==="TOO_MANY_REQUESTS"){
+        showToast(`登录尝试过多，请 ${json.error.retryAfter||900} 秒后再试`,"err",6000);
+      }else{
+        showToast("密钥错误，请检查后重试","err");
+      }
+      secretInput.select();return
+    }
+    secret=s;
+    loginTime=Date.now();
+    localStorage.setItem(adminSecretKey,s);
+    localStorage.setItem(adminLoginTimeKey,String(loginTime));
     loginWrap.style.display="none";mainPanel.style.display="block";
+    startSessionCountdown();
     loadAccounts();
-  }catch(e){showToast("验证失败","err")}
+  }catch(e){showToast("验证失败，请检查网络","err")}
 }
 
 // ── 加载账号 ──
@@ -402,10 +501,54 @@ accBody.addEventListener("click",async e=>{
   }
 });
 
-// ── 自动登录 ──
-if(secret){
+// ── 加载审计日志 ──
+async function loadAudit(){
+  try{
+    const res=await fetch("/api/admin/audit?limit=100",{headers:adminHeaders()});
+    const json=await res.json();
+    if(!json.ok){showToast("加载失败","err");return}
+
+    // 统计概览
+    const stats=json.stats||{};
+    auditStats.innerHTML=Object.entries(stats).map(([action,cnt])=>{
+      const cls=action.includes("FAILED")?"badge-err":action.includes("SUCCESS")?"badge-ok":action.includes("TOPUP")||action.includes("CODES")?"badge-info":"badge-warn";
+      return `<span class="audit-badge ${cls}" style="padding:3px 10px;font-size:11px;border-radius:999px">${esc(action)}: ${cnt}</span>`;
+    }).join("")||"<span style='color:var(--g400);font-size:12px'>暂无操作记录</span>";
+
+    const entries=json.entries||[];
+    if(!entries.length){auditBody.innerHTML="";emptyAudit.classList.remove("hidden");return}
+    emptyAudit.classList.add("hidden");
+
+    auditBody.innerHTML=entries.map(e=>{
+      const dt=new Date(e.timestamp).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit",second:"2-digit"});
+      const isFail=e.action.includes("FAILED");
+      const isOk=e.action.includes("SUCCESS");
+      const badgeCls=isFail?"badge-err":isOk?"badge-ok":"badge-info";
+      const details=Object.entries(e.details||{}).map(([k,v])=>`${k}=${v}`).join(", ")||"-";
+      return `<tr>
+        <td style="color:var(--g400);font-family:var(--font-sans);white-space:nowrap">${esc(dt)}</td>
+        <td class="action"><span class="audit-badge ${badgeCls}">${esc(e.action)}</span></td>
+        <td>${esc(e.ip)}</td>
+        <td style="font-family:var(--font-sans);color:var(--g500);font-size:11px;max-width:240px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(details)}">${esc(details)}</td>
+      </tr>`;
+    }).join("");
+  }catch(e){showToast("网络错误","err")}
+}
+
+refreshAuditBtn.addEventListener("click",loadAudit);
+
+// ── 自动登录（含会话过期检查） ──
+if(secret && loginTime && (Date.now()-loginTime) < SESSION_TTL){
   loginWrap.style.display="none";mainPanel.style.display="block";
+  startSessionCountdown();
   loadAccounts();
+}else if(secret && loginTime && (Date.now()-loginTime) >= SESSION_TTL){
+  // 会话已过期，清除并要求重新登录
+  localStorage.removeItem(adminSecretKey);
+  localStorage.removeItem(adminLoginTimeKey);
+  secret="";loginTime=0;
+  showToast("上次会话已过期，请重新登录","warn",4000);
+  secretInput.focus();
 }else{
   secretInput.focus();
 }
