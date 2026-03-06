@@ -285,6 +285,9 @@ body.sidebar-open .action-bar{margin-right:400px}
 .suggest-chip{display:inline-flex;align-items:center;gap:4px;padding:5px 10px;border-radius:16px;font-size:11px;cursor:pointer;border:1px solid var(--g200);background:white;color:var(--g700);transition:.15s;line-height:1.4;text-align:left;max-width:100%}
 .suggest-chip:hover{border-color:var(--pri);color:var(--pri);background:var(--pri-l)}
 .suggest-chip svg{flex-shrink:0}
+.suggest-all-btn{display:flex;align-items:center;gap:6px;width:100%;padding:8px 12px;border-radius:10px;font-size:12px;font-weight:600;cursor:pointer;border:none;background:linear-gradient(135deg,var(--pri) 0%,#7c3aed 100%);color:white;transition:.15s;margin-top:4px;box-shadow:0 2px 8px rgba(79,70,229,.3)}
+.suggest-all-btn:hover{opacity:.9;box-shadow:0 4px 12px rgba(79,70,229,.4);transform:translateY(-1px)}
+.suggest-all-btn svg{flex-shrink:0}
 .chat-bubble .points-tag{font-size:10px;color:var(--g400);margin-top:4px}
 .chat-input-area{padding:12px 16px;border-top:1px solid var(--g200);display:flex;gap:8px;align-items:flex-end;flex-shrink:0;background:white}
 .chat-input-area textarea{flex:1;resize:none;border:1px solid var(--g200);border-radius:8px;padding:8px 12px;font-size:13px;font-family:var(--font-sans);line-height:1.5;min-height:38px;max-height:120px;outline:none;transition:border-color .15s}
@@ -1245,9 +1248,17 @@ function openChat(paragraphId){
     });
   }
   if(suggestions.length){
-    chatSuggestionsEl.innerHTML=suggestions.map(sg=>
+    const chips=suggestions.map(sg=>
       `<button class="suggest-chip" title="${escapeHtml(sg)}"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 5v14M5 12h14"/></svg><span>${escapeHtml(sg.length>50?sg.slice(0,50)+"…":sg)}</span></button>`
     ).join("");
+    // 建议数量 > 1 时才显示"一键修改以上全部问题"按钮
+    const allBtn=suggestions.length>1
+      ?`<button class="suggest-all-btn" id="suggestAllBtn">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.2"><path d="M13 2L3 14h9l-1 8 10-12h-9l1-8z"/></svg>
+          一键修改以上全部问题（${suggestions.length} 项）
+        </button>`
+      :"";
+    chatSuggestionsEl.innerHTML=chips+allBtn;
   }else{
     chatSuggestionsEl.innerHTML="";
   }
@@ -1417,14 +1428,31 @@ chatMessagesEl.addEventListener("click",e=>{
   }
 });
 chatSuggestionsEl.addEventListener("click",e=>{
+  // 单条建议 chip 点击
   const chip=e.target.closest?.(".suggest-chip");
-  if(!chip)return;
-  const txt=chip.title;
-  if(!txt)return;
-  chatInput.value=txt;
-  chatInput.style.height="auto";
-  chatInput.style.height=Math.min(chatInput.scrollHeight,120)+"px";
-  sendChatMessage();
+  if(chip){
+    const txt=chip.title;
+    if(!txt)return;
+    chatInput.value=txt;
+    chatInput.style.height="auto";
+    chatInput.style.height=Math.min(chatInput.scrollHeight,120)+"px";
+    sendChatMessage();
+    return;
+  }
+
+  // "一键修改以上全部问题"按钮点击
+  const allBtn=e.target.closest?.(".suggest-all-btn");
+  if(allBtn){
+    // 收集当前所有 suggest-chip 的完整建议文本（通过 title 属性）
+    const allChips=chatSuggestionsEl.querySelectorAll(".suggest-chip");
+    const items=Array.from(allChips).map((c,i)=>`${i+1}. ${c.title}`).filter(Boolean);
+    if(!items.length)return;
+    const combinedMsg=`请针对以下所有问题，对本段落进行一次性综合改写，务必同时解决：\n${items.join("\n")}`;
+    chatInput.value=combinedMsg;
+    chatInput.style.height="auto";
+    chatInput.style.height=Math.min(chatInput.scrollHeight,120)+"px";
+    sendChatMessage();
+  }
 });
 
 // ══════ ADMIN ══════
