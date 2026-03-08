@@ -5,7 +5,7 @@ import {
   createDashscopeClient,
   loadDashscopeConfigFromEnv,
 } from "./client.js";
-import { buildRewriteMessages, type RewriteOutput } from "./prompts.js";
+import { buildRewriteMessages, type RewriteMessageOptions, type RewriteOutput } from "./prompts.js";
 
 export type RewriteParams = {
   logger: AppLogger;
@@ -13,6 +13,16 @@ export type RewriteParams = {
   contextBefore?: string;
   contextAfter?: string;
   signals: FindingSignal[];
+  /**
+   * 改写强度（可选）。
+   *
+   * 设计原因：
+   * - 部分用户反馈“点了一键改写但 AI 率不变”，常见原因是模型输出与原文过于相似；
+   * - 允许在服务端做一次“强力改写重试”，以提升总体有效性。
+   */
+  rewriteMode?: RewriteMessageOptions["mode"];
+  /** 最小表层改动比例（仅在强力改写时用于约束） */
+  minChangeRatio?: RewriteMessageOptions["minChangeRatio"];
 };
 
 /**
@@ -28,18 +38,22 @@ export async function rewriteParagraphWithDashscope(
   const cfg = loadDashscopeConfigFromEnv();
   const client = createDashscopeClient(cfg);
 
+  const mode: NonNullable<RewriteMessageOptions["mode"]> = params.rewriteMode ?? "normal";
+  const temperature = mode === "aggressive" ? 0.6 : 0.2;
+  const purpose = mode === "aggressive" ? "rewrite.paragraph.aggressive" : "rewrite.paragraph";
+
   const { json } = await chatJson<RewriteOutput>({
     logger: params.logger,
     client,
     model: cfg.model,
-    purpose: "rewrite.paragraph",
-    temperature: 0.2,
+    purpose,
+    temperature,
     messages: buildRewriteMessages({
       paragraphText: params.paragraphText,
       contextBefore: params.contextBefore,
       contextAfter: params.contextAfter,
       signals: params.signals,
-    }),
+    }, { mode, minChangeRatio: params.minChangeRatio }),
   });
 
   if (!json?.revisedText || typeof json.revisedText !== "string") {

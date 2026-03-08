@@ -355,6 +355,15 @@ export function createApiRouter(params: {
         const after = session.paragraphs[p.index + 1]?.text;
 
         const chargedPoints = estimateRewritePoints(p.text);
+        const riskBefore =
+          typeof pr?.riskScore === "number"
+            ? pr.riskScore
+            : safeParagraphRiskScore({
+                id: p.id,
+                index: p.index,
+                kind: p.kind,
+                text: p.text,
+              });
 
         // 管理员无限积分，跳过扣费
         if (!isAdmin) {
@@ -372,24 +381,94 @@ export function createApiRouter(params: {
 
         let rewritten: { revisedText: string; riskSignalsResolved: string[] };
         try {
-          const full = await rewriteParagraphWithDashscope({
-            logger: req.log ?? params.logger,
+          const log = req.log ?? params.logger;
+
+          const attempt1 = await rewriteParagraphWithDashscope({
+            logger: log,
             paragraphText: p.text,
             contextBefore: before,
             contextAfter: after,
             // eslint-disable-next-line @typescript-eslint/no-explicit-any
             signals: signals as any,
+            rewriteMode: "normal",
           });
-          rewritten = { revisedText: full.revisedText, riskSignalsResolved: full.riskSignalsResolved };
+
+          const sim1 = bigramJaccardSimilarity(p.text, attempt1.revisedText);
+          const riskAfter1 = safeParagraphRiskScore({
+            id: p.id,
+            index: p.index,
+            kind: p.kind,
+            text: attempt1.revisedText,
+          });
+
+          let chosen = attempt1;
+          let chosenSim = sim1;
+          let chosenRiskAfter = riskAfter1;
+          let retryUsed = false;
+
+          /**
+           * 质量门槛：
+           * - 若模型输出与原文高度相似，或者对我们的规则检测降分不明显，则进行一次强力改写重试。
+           * - 设计原因：避免出现“点了一键改写但AI率没变”的用户反馈。
+           */
+          const needsRetry = sim1 >= 0.92 || riskAfter1 >= riskBefore - 5;
+          if (needsRetry) {
+            retryUsed = true;
+            log.warn("Rewrite seems ineffective, retrying aggressively", {
+              sessionId,
+              paragraphId: pid,
+              riskBefore,
+              riskAfter1,
+              similarity1: Number(sim1.toFixed(3)),
+            });
+
+            const attempt2 = await rewriteParagraphWithDashscope({
+              logger: log,
+              paragraphText: p.text,
+              contextBefore: before,
+              contextAfter: after,
+              // eslint-disable-next-line @typescript-eslint/no-explicit-any
+              signals: signals as any,
+              rewriteMode: "aggressive",
+              minChangeRatio: 0.3,
+            });
+
+            const sim2 = bigramJaccardSimilarity(p.text, attempt2.revisedText);
+            const riskAfter2 = safeParagraphRiskScore({
+              id: p.id,
+              index: p.index,
+              kind: p.kind,
+              text: attempt2.revisedText,
+            });
+
+            const better = pickBetterRewrite({
+              a: { out: attempt1, similarity: sim1, riskAfter: riskAfter1 },
+              b: { out: attempt2, similarity: sim2, riskAfter: riskAfter2 },
+            });
+            chosen = better.out;
+            chosenSim = better.similarity;
+            chosenRiskAfter = better.riskAfter;
+          }
+
+          rewritten = {
+            revisedText: chosen.revisedText,
+            riskSignalsResolved: chosen.riskSignalsResolved,
+          };
 
           rewriteResults[pid] = {
-            revisedText: full.revisedText,
-            changeRationale: full.changeRationale ?? [],
-            riskSignalsResolved: full.riskSignalsResolved ?? [],
-            needHumanCheck: full.needHumanCheck ?? [],
-            humanFeatures: full.humanFeatures ?? [],
+            revisedText: chosen.revisedText,
+            changeRationale: chosen.changeRationale ?? [],
+            riskSignalsResolved: chosen.riskSignalsResolved ?? [],
+            needHumanCheck: chosen.needHumanCheck ?? [],
+            humanFeatures: chosen.humanFeatures ?? [],
             chargedPoints,
             createdAt: Date.now(),
+            quality: {
+              riskBefore,
+              riskAfter: chosenRiskAfter,
+              similarity: Number(chosenSim.toFixed(3)),
+              retryUsed,
+            },
           };
         } catch (e) {
           if (!isAdmin) {
@@ -495,6 +574,11 @@ export function createApiRouter(params: {
       const outName = isRevised
         ? session.filename.replace(/\\.docx$/i, "") + "-revised.docx"
         : session.filename;
+
+      // 下载文件禁用缓存，避免浏览器复用旧版本导致“下载后再检测分数不变”的错觉
+      res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+      res.setHeader("Pragma", "no-cache");
+      res.setHeader("Expires", "0");
 
       res.setHeader(
         "Content-Type",
@@ -836,5 +920,72 @@ function decodeMulterFilename(raw: string): string {
   } catch {
     return raw;
   }
+}
+
+/**
+ * 计算两段文本的相似度（0-1），基于字符 bigram 的 Jaccard。
+ *
+ * 设计原因：
+ * - 需要快速判断“改写是否与原文过于相似”，以决定是否触发强力重试；
+ * - bigram 相似度对中文更稳定，不依赖分词库，且对“同义词替换但结构不变”的情况更敏感。
+ */
+function bigramJaccardSimilarity(aRaw: string, bRaw: string): number {
+  const a = normalizeForSimilarity(aRaw);
+  const b = normalizeForSimilarity(bRaw);
+  if (!a && !b) return 1;
+  if (!a || !b) return 0;
+
+  const grams = (s: string) => {
+    const set = new Set<string>();
+    if (s.length === 1) {
+      set.add(s);
+      return set;
+    }
+    for (let i = 0; i < s.length - 1; i += 1) set.add(s.slice(i, i + 2));
+    return set;
+  };
+
+  const A = grams(a);
+  const B = grams(b);
+  let inter = 0;
+  for (const x of A) if (B.has(x)) inter += 1;
+  const union = A.size + B.size - inter;
+  return union ? inter / union : 0;
+}
+
+function normalizeForSimilarity(s: string): string {
+  return String(s ?? "")
+    .replace(/\s+/g, "")
+    .replace(/[，。；：、！？“”‘’（）()【】\[\]{}<>《》…—\-·•]/g, "")
+    .trim();
+}
+
+/**
+ * 在不抛异常的前提下获取段落风险分。
+ *
+ * 设计原因：
+ * - 改写质量评估属于“辅助决策”，不应因为极端输入导致整次改写失败；
+ * - 出错时返回 0，等同于不触发重试的保守策略。
+ */
+function safeParagraphRiskScore(p: { id: string; index: number; kind: string; text: string }): number {
+  try {
+    const r = detectAigcRisk([
+      { id: p.id, index: p.index, kind: p.kind as never, text: p.text },
+    ]);
+    return r.paragraphReports?.[0]?.riskScore ?? 0;
+  } catch {
+    return 0;
+  }
+}
+
+function pickBetterRewrite<T extends { revisedText: string }>(params: {
+  a: { out: T; similarity: number; riskAfter: number };
+  b: { out: T; similarity: number; riskAfter: number };
+}) {
+  if (params.b.riskAfter < params.a.riskAfter) return params.b;
+  if (params.b.riskAfter > params.a.riskAfter) return params.a;
+  // 风险分一致时，优先选择更不相似（更可能打破检测特征）
+  if (params.b.similarity < params.a.similarity) return params.b;
+  return params.a;
 }
 

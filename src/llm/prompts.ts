@@ -16,6 +16,24 @@ export type RewriteOutput = {
   humanFeatures?: string[];
 };
 
+export type RewriteMode = "normal" | "aggressive";
+
+export type RewriteMessageOptions = {
+  /**
+   * 改写强度。
+   *
+   * 设计原因：
+   * - 在“严格不增删事实”的约束下，模型可能只做轻微润色，导致“看似改写但检测分数不变”；
+   * - 当我们发现改写效果不佳时，需要一次更强的结构重写来制造足够的写作差异。
+   */
+  mode?: RewriteMode;
+  /**
+   * 期望的最小表层改动比例（0-1）。
+   * 注意：这是“表层表达”的改动约束，不代表改变事实或核心论点。
+   */
+  minChangeRatio?: number;
+};
+
 export type JudgeInput = {
   paragraphText: string;
   signals: FindingSignal[];
@@ -28,13 +46,19 @@ export type JudgeOutput = {
   shouldRewrite: boolean;
 };
 
-export function buildRewriteMessages(input: RewriteInput): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
+export function buildRewriteMessages(
+  input: RewriteInput,
+  opts?: RewriteMessageOptions
+): OpenAI.Chat.Completions.ChatCompletionMessageParam[] {
   const signalSummary = input.signals.map((s) => ({
     signalId: s.signalId,
     title: s.title,
     evidence: s.evidence,
     suggestion: s.suggestion,
   }));
+
+  const mode: RewriteMode = opts?.mode ?? "normal";
+  const minChangeRatio = typeof opts?.minChangeRatio === "number" ? opts.minChangeRatio : 0.25;
 
   return [
     {
@@ -48,6 +72,18 @@ export function buildRewriteMessages(input: RewriteInput): OpenAI.Chat.Completio
         "2) 保持原文引用标记（如[1]、（作者，年份））的存在与位置。",
         "3) 改写后的文本必须与原文表达相同的学术观点，不可增删核心论点。",
         "",
+        ...(mode === "aggressive"
+          ? [
+              "══ 质量门槛（本次为强力改写） ══",
+              `1) 必须产生明显表层差异：至少约 ${Math.round(
+                minChangeRatio * 100
+              )}% 的字词表达发生变化（允许改句式、拆并句、调序、改变论证展开方式）。`,
+              "2) 必须重排句子节奏：至少出现 1 句短句（<15字）与 1 句长句（>40字）。",
+              "3) 不允许只做同义词替换；必须体现研究者的认知摩擦（如：但值得注意的是/笔者在调研中发现/这一点与预期不同）。",
+              "4) 若原文缺乏可用数据锚点，不要编造数字；改为补充范围/边界/条件/对象的限定描述（不引入新事实）。",
+              "",
+            ]
+          : []),
         "══ 必须消除的 6 种 AI 特征 ══",
         "A. 模板连接词堆叠：删除或替换「首先/其次/再次/最后」「此外/同时/与此同时」等模板化过渡词，改为用因果关系和指代自然衔接。",
         "B. 对称结构：打破「一方面…另一方面」「不仅…而且」等工整对仗，改为侧重论述重点一方。",

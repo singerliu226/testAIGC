@@ -1125,7 +1125,7 @@ function openPreview(){
   previewContent.innerHTML=html;
 
   // ── 效果验证模块 ──
-  const reportBefore=state.session.report;
+  const reportBefore=state.session.reportBefore;
   const reportAfter=state.session.reportAfter;
   const hasReport=reportBefore&&reportAfter&&modCount>0;
 
@@ -1192,7 +1192,9 @@ function openPreview(){
   }
 
   previewStats.innerHTML=`共 <strong>${paras.length}</strong> 段，其中 <strong>${modCount}</strong> 段已修改`;
-  previewDownload.href=_exportHref;
+  // 追加 revision 做简单 cache-bust，避免浏览器复用旧下载缓存
+  const rev=state.session.revision||0;
+  previewDownload.href=_exportHref+(_exportHref.includes("?")?"&":"?")+`rev=${encodeURIComponent(rev)}`;
   previewModal.classList.add("open");
 }
 
@@ -1233,7 +1235,7 @@ function openChat(paragraphId){
   const rb=state.session.reportBefore;
   const pr=rb?(rb.paragraphReports||[]).find(x=>x.paragraphId===paragraphId):null;
   const lvl=pr?pr.riskLevel:"low";
-  chatParaLabel.textContent=`第${p.index}段 AI率${pr?Math.round(pr.riskScore):"-"}%`;
+  chatParaLabel.textContent=`第${p.index+1}段 AI率${pr?Math.round(pr.riskScore):"-"}%`;
   chatParaLabel.className=`pill pill-${lvl}`;
 
   const currentText=state.session.revised?.[paragraphId]||p.text;

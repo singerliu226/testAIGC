@@ -41,6 +41,19 @@ export type SessionRecord = {
       humanFeatures?: string[];
       chargedPoints: number;
       createdAt: number;
+      /**
+       * 改写质量评估信息（可选）。
+       *
+       * 设计原因：
+       * - 用户常见反馈是“改写后再次检测分数没变”，需要在服务端识别“改写太像原文/降分不明显”的情况；
+       * - 该字段用于前端/日志展示与排障，不参与计费与导出逻辑，保持向后兼容。
+       */
+      quality?: {
+        riskBefore: number;
+        riskAfter: number;
+        similarity: number;
+        retryUsed: boolean;
+      };
     }
   >;
 
