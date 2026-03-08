@@ -154,6 +154,8 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .rewrite-progress-bar{flex:1;height:6px;border-radius:3px;background:var(--g200);overflow:hidden}
 .rewrite-progress-fill{height:100%;border-radius:3px;background:var(--pri);transition:width .3s ease}
 .rewrite-progress-text{font-size:12px;color:var(--g500);white-space:nowrap;min-width:90px;text-align:right}
+.hint-note{margin-top:10px;font-size:12px;color:var(--g400);line-height:1.6}
+.hint-note strong{color:var(--g700)}
 .toast{position:fixed;top:72px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:13px;font-weight:500;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,.15);pointer-events:none;opacity:0;transition:opacity .3s}
 .toast.show{opacity:1}
 .toast-ok{background:var(--ok);color:white}
@@ -330,10 +332,6 @@ body.sidebar-open .action-bar{margin-right:400px}
       <button class="icon-btn" id="privacy" title="隐私说明">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 22s8-4 8-10V5l-8-3-8 3v7c0 6 8 10 8 10z"/></svg>
       </button>
-      <span class="balance-badge hidden" id="adminBadge" style="background:#fef2f2;color:#dc2626;cursor:pointer" title="管理员模式（点击管理）">管理员</span>
-      <button class="icon-btn" id="adminLoginBtn" title="管理员登录">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 21v-2a4 4 0 00-4-4H8a4 4 0 00-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>
-      </button>
     </div>
   </div>
 </header>
@@ -358,10 +356,10 @@ body.sidebar-open .action-bar{margin-right:400px}
       <div class="free-banner">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
         <span><strong>首次检测完全免费</strong>，无需注册</span>
-        <span class="free-banner-sep">|</span>
-        <span>新用户赠送 <strong id="freePtsHint">50</strong> 积分用于改写降AI率</span>
-        <span class="free-banner-sep">|</span>
-        <span>积分不够随时购买</span>
+        <span class="free-banner-sep" id="freeSep" style="display:none">|</span>
+        <span id="freePtsWrap" style="display:none">新用户赠送 <strong id="freePtsHint">0</strong> 积分用于改写降AI率</span>
+        <span class="free-banner-sep" id="buySep">|</span>
+        <span>需要改写可随时购买积分</span>
       </div>
       <div class="progress-wrap" id="uploadProgress"><div class="progress-bar" id="uploadProgressBar" style="width:0%"></div></div>
     </div>
@@ -447,9 +445,9 @@ body.sidebar-open .action-bar{margin-right:400px}
       </div>
       <div style="display:flex;gap:8px;align-items:center">
         <button class="btn btn-outline btn-sm" id="cancel" style="display:none">取消</button>
-        <button class="btn btn-primary" id="rewrite" disabled>
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M11 4H4a2 2 0 00-2 2v14a2 2 0 002 2h14a2 2 0 002-2v-7"/><path d="M18.5 2.5a2.121 2.121 0 013 3L12 15l-4 1 1-4 9.5-9.5z"/></svg>
-          一键降低 AI 痕迹
+        <button class="btn btn-primary" id="rewriteToTarget" disabled title="自动多轮改写高风险段落，尽量把整体 AI率 降到 15% 或更低">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
+          一键降到 15%
         </button>
         <button class="btn btn-export hidden" id="export" onclick="openPreview()">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
@@ -460,6 +458,9 @@ body.sidebar-open .action-bar{margin-right:400px}
     <div class="rewrite-progress" id="rewriteProgress">
       <div class="rewrite-progress-bar"><div class="rewrite-progress-fill" id="rewriteProgressFill" style="width:0%"></div></div>
       <div class="rewrite-progress-text" id="rewriteProgressText">准备中…</div>
+    </div>
+    <div class="hint-note">
+      <strong>提示：</strong>AI 自动修改仅供参考，建议结合下方“建议”自行手动修改，以获得更佳结果与更高可控性。
     </div>
   </div>
 </div>
@@ -613,7 +614,7 @@ body.sidebar-open .action-bar{margin-right:400px}
 
 <script>
 const $ = (id) => document.getElementById(id);
-const out=$("out"),uploadBtn=$("upload"),rewriteBtn=$("rewrite"),cancelBtn=$("cancel"),fileInput=$("file"),exportLink=$("export"),exportTop=$("exportTop"),balanceEl=$("balance"),estimateEl=$("estimate"),estimateWrap=$("estimateWrap"),topupBtn=$("topup"),recheckBtn=$("recheck"),historyBtn=$("history"),privacyBtn=$("privacy"),historyModal=$("historyModal"),historyClose=$("historyClose"),historyBody=$("historyBody"),privacyModal=$("privacyModal"),privacyClose=$("privacyClose"),overviewCard=$("overviewCard"),reportCard=$("reportCard"),tbody=$("tbody"),minScore=$("minScore"),limitationsEl=$("limitations"),selectShownBtn=$("selectShown"),clearSelBtn=$("clearSel"),actionBar=$("actionBar"),selCountEl=$("selCount"),deltaInfo=$("deltaInfo"),dropZone=$("dropZone"),uploadProgress=$("uploadProgress"),uploadProgressBar=$("uploadProgressBar");
+const out=$("out"),uploadBtn=$("upload"),rewriteToTargetBtn=$("rewriteToTarget"),cancelBtn=$("cancel"),fileInput=$("file"),exportLink=$("export"),exportTop=$("exportTop"),balanceEl=$("balance"),estimateEl=$("estimate"),estimateWrap=$("estimateWrap"),topupBtn=$("topup"),recheckBtn=$("recheck"),historyBtn=$("history"),privacyBtn=$("privacy"),historyModal=$("historyModal"),historyClose=$("historyClose"),historyBody=$("historyBody"),privacyModal=$("privacyModal"),privacyClose=$("privacyClose"),overviewCard=$("overviewCard"),reportCard=$("reportCard"),tbody=$("tbody"),minScore=$("minScore"),limitationsEl=$("limitations"),selectShownBtn=$("selectShown"),clearSelBtn=$("clearSel"),actionBar=$("actionBar"),selCountEl=$("selCount"),deltaInfo=$("deltaInfo"),dropZone=$("dropZone"),uploadProgress=$("uploadProgress"),uploadProgressBar=$("uploadProgressBar");
 const verdictIcon=$("verdictIcon"),verdictTitle=$("verdictTitle"),verdictDesc=$("verdictDesc"),verdictBarFill=$("verdictBarFill"),verdictBarLabel=$("verdictBarLabel"),verdictFilename=$("verdictFilename"),emptyState=$("emptyState");
 const tabFilter=$("tabFilter"),countAll=$("countAll"),countMedium=$("countMedium"),countHigh=$("countHigh");
 const chatSidebar=$("chatSidebar"),chatCloseBtn=$("chatClose"),chatParaLabel=$("chatParaLabel"),chatParaPreview=$("chatParaPreview"),chatSuggestionsEl=$("chatSuggestions"),chatMessagesEl=$("chatMessages"),chatInput=$("chatInput"),chatSendBtn=$("chatSend");
@@ -713,8 +714,8 @@ function updateSelectionUI(){
   const pts=estimatePoints();
   estimateEl.textContent=String(pts);
   estimateWrap.style.display=cnt>0?"inline":"none";
-  rewriteBtn.disabled=cnt===0||!state.sessionId||queue.running;
-  actionBar.classList.toggle("visible",(cnt>0||queue.running)&&!!state.sessionId);
+  rewriteToTargetBtn.disabled=!state.sessionId||queue.running;
+  actionBar.classList.toggle("visible",!!state.sessionId);
   const hasRevised=state.session&&state.session.revised&&Object.keys(state.session.revised).length>0;
   syncExportButtons(null,hasRevised);
 }
@@ -980,46 +981,161 @@ uploadBtn.addEventListener("click",async()=>{
   }
 });
 
-rewriteBtn.addEventListener("click",async()=>{
-  if(!state.sessionId)return;const ids=Array.from(state.selected);if(!ids.length)return;
-  const est=estimatePoints();if(!confirm(`将改写 ${ids.length} 个段落，约需 ${est} 积分。继续吗？`))return;
-  queue={running:true,cancelled:false,total:ids.length,done:0,failed:0};
-  cancelBtn.style.display="inline-flex";cancelBtn.disabled=false;rewriteBtn.disabled=true;
-  setRwProgress(0,ids.length,"正在准备改写…");
-  showToast(`开始改写 ${ids.length} 个段落…`,"ok",2000);
-  const failedIds=[];
+rewriteToTargetBtn.addEventListener("click",async()=>{
+  if(!state.sessionId||queue.running)return;
+  if(!confirm("将自动多轮改写高风险段落，尽量把整体 AI率 降到 15% 或更低。\n\n注意：AI 自动修改仅供参考，建议最终自行检查并手动调整。\n\n继续吗？"))return;
+
+  queue={running:true,cancelled:false,total:1,done:0,failed:0};
+  cancelBtn.style.display="none";
+  rewriteToTargetBtn.disabled=true;
+  setRwProgress(0,1,"正在启动任务…");
+
+  let pollTimer=null;
+  let jobId=null;
+  const startedAt=Date.now();
+
+  const stopPolling=()=>{
+    if(pollTimer){clearInterval(pollTimer);pollTimer=null}
+  };
+
   try{
-    for(let i=0;i<ids.length;i++){
-      if(queue.cancelled)break;
-      setRwProgress(i,queue.total,`改写中 ${i}/${queue.total}…`);
-      const res=await fetch(`/api/rewrite/${encodeURIComponent(state.sessionId)}`,{method:"POST",headers:getHeaders(),body:JSON.stringify({paragraphIds:[ids[i]]})});
-      const json=await res.json();
-      if(!json.ok){
-        queue.failed++;failedIds.push(ids[i]);
-        showToast(`段落改写失败：${json.error?.message||"未知错误"}`,"err",3000);
-        queue.done++;
-        setRwProgress(queue.done,queue.total,`改写中 ${queue.done}/${queue.total}…`);
-        continue;
+    // 1) 启动后台任务（立即返回 jobId）
+    const startRes=await fetch(`/api/rewrite-to-target/${encodeURIComponent(state.sessionId)}/start`,{
+      method:"POST",
+      headers:getHeaders(),
+      body:JSON.stringify({targetScore:15,maxRounds:6,perRound:8,maxTotal:30,minParagraphScore:35,maxPerParagraph:2,stopNoImproveRounds:2,allowFactRisk:false})
+    });
+    const startJson=await startRes.json();
+    log(startJson);
+    if(!startJson.ok){
+      showToast("启动失败："+(startJson.error?.message||startJson.message||"未知错误"),"err",6000);
+      queue.running=false;
+      rewriteToTargetBtn.disabled=false;
+      updateSelectionUI();
+      return;
+    }
+    jobId=startJson.jobId;
+
+    // 2) 轮询真实进度
+    const poll=async()=>{
+      const sRes=await fetch(`/api/rewrite-to-target/${encodeURIComponent(state.sessionId)}/status/${encodeURIComponent(jobId)}`,{headers:getHeaders()});
+      const sJson=await sRes.json();
+      if(!sJson.ok){
+        showToast("获取进度失败："+(sJson.error?.message||sJson.message||"未知错误"),"err",6000);
+        stopPolling();
+        queue.running=false;
+        rewriteToTargetBtn.disabled=false;
+        updateSelectionUI();
+        return;
       }
-      queue.done++;
-      if(json.billing&&typeof json.billing.balance==="number")balanceEl.textContent=String(json.billing.balance);
-      syncExportButtons(json.exportUrl||_exportHref,true);
-      setRwProgress(queue.done,queue.total,`改写中 ${queue.done}/${queue.total}…`);
-    }
-    // 改写结束后一次性刷新 session 和 UI
-    const sess=await fetchSession(state.sessionId);state.session=sess;render();
-    if(!queue.cancelled&&failedIds.length){
-      showToast(`完成！${queue.done} 段成功，${failedIds.length} 段失败可重试`,"warn",5000);
-      state.selected=new Set(failedIds);render();
-    }else if(queue.cancelled){
-      showToast(`已取消，共完成 ${queue.done}/${queue.total} 段`,"warn",3000);
-    }else{
-      showToast(`全部完成！已改写 ${queue.done} 段`,"ok",3000);
-      state.selected=new Set();render();
-      setTimeout(()=>openPreview(),500);
-    }
-  }catch(e){showToast("网络错误："+String(e),"err",5000)}finally{
-    queue.running=false;cancelBtn.style.display="none";setRwProgress(0,0);updateSelectionUI();
+      const job=sJson.job;
+      const p=job.progress||{};
+      const processed=Number(p.processed||0);
+      const maxTotal=Number(p.maxTotal||1);
+      const rounds=Number(p.roundsUsed||0);
+      const succ=typeof p.succeeded==="number"?p.succeeded:null;
+      const fail=typeof p.failed==="number"?p.failed:null;
+      const overall=typeof p.overallCurrent==="number"?p.overallCurrent:null;
+      const msg=p.lastMessage||"运行中…";
+
+      // 用真实 processed/maxTotal 驱动进度（不会卡 90%）
+      const pct=maxTotal>0?Math.min(99,Math.round((processed/maxTotal)*100)):0;
+      rwProgress.classList.add("visible");
+      rwProgressFill.style.width=pct+"%";
+      const sf=(succ!==null||fail!==null)?`｜成功 ${succ??0}｜失败 ${fail??0}`:"";
+      rwProgressText.textContent=`${msg}${sf}（${pct}%）`;
+
+      if(job.status==="completed"){
+        stopPolling();
+        rwProgressFill.style.width="100%";
+        rwProgressText.textContent="已完成（100%）";
+        const sess=await fetchSession(state.sessionId);
+        state.session=sess;
+        render();
+        const beforeScore=job.progress?.overallBefore;
+        const afterScore=sess.reportAfter?.overallRiskScore;
+        const fails=(job.failures||[]);
+        if(fails.length){
+          const sample=fails.slice(0,3).map(x=>`第 ${Number(x.paragraphIndex||0)+1} 段：${x.message||x.code}`).join("\\n");
+          showToast(`已完成可改部分，但有 ${fails.length} 段被拦截/失败（已跳过）`,"warn",8000);
+          // 给用户一个“可操作”的清单，而不只是报错
+          log({
+            message:"自动降分已完成（部分段落被拦截/失败）",
+            tip:"我们已经把可以自动修改的部分处理完毕。以下段落建议你结合“建议”手动修改；若你愿意，也可以继续让我们尝试，但需要承担事实可能被改动/编造的风险，并逐段核对数字、日期、地点、研究结论等。",
+            failures:fails
+          });
+          const wantContinue=confirm(
+            `我们已经把能自动修改的部分处理完毕，但仍有 ${fails.length} 段无法自动改写（主要原因：为避免编造事实而被拦截）。\\n\\n你可以选择：\\n- 自行根据“建议”手动修改（更稳妥）\\n- 继续让我们尝试（可能出现编造/改动事实的风险，需要你逐段核对数字、日期、地点、研究结论等）\\n\\n是否继续尝试（风险模式）？\\n\\n示例失败原因：\\n${sample}`
+          );
+          if(wantContinue){
+            // 继续尝试：聚焦上次失败段落，且开启风险模式
+            queue.running=true;
+            rewriteToTargetBtn.disabled=true;
+            setRwProgress(0,1,"正在启动风险模式继续尝试…");
+            const preferIds=fails.map(x=>x.paragraphId).filter(Boolean);
+            const s2=await fetch(`/api/rewrite-to-target/${encodeURIComponent(state.sessionId)}/start`,{
+              method:"POST",
+              headers:getHeaders(),
+              body:JSON.stringify({targetScore:15,maxRounds:6,perRound:8,maxTotal:30,minParagraphScore:35,maxPerParagraph:2,stopNoImproveRounds:2,allowFactRisk:true,preferParagraphIds:preferIds})
+            });
+            const j2=await s2.json();
+            if(j2.ok&&j2.jobId){
+              jobId=j2.jobId;
+              stopPolling();
+              await poll();
+              pollTimer=setInterval(()=>{poll().catch(()=>{})},1200);
+              return;
+            }else{
+              showToast("继续尝试启动失败："+(j2.error?.message||j2.message||"未知错误"),"err",8000);
+            }
+          }
+        }
+
+        if(typeof beforeScore==="number"&&typeof afterScore==="number"){
+          const d=Math.round(afterScore-beforeScore);
+          showToast(`自动降分完成：${Math.round(beforeScore)}% → ${Math.round(afterScore)}%（${d<0?"降低":"变化"} ${Math.abs(d)}%）`,"ok",6000);
+        }else{
+          showToast("自动降分完成","ok",4000);
+        }
+        queue.running=false;
+        updateSelectionUI();
+        return;
+      }
+      if(job.status==="failed"){
+        stopPolling();
+        const em=job.error?.message||"任务失败";
+        rwProgressText.textContent=`失败：${em}`;
+        showToast("自动降分失败："+em,"err",8000);
+        queue.running=false;
+        updateSelectionUI();
+        return;
+      }
+      if(job.status==="cancelled"){
+        stopPolling();
+        rwProgressText.textContent="已取消";
+        showToast("已取消自动降分","warn",4000);
+        queue.running=false;
+        updateSelectionUI();
+        return;
+      }
+
+      // 防止“看不见变化”：在文案中加入当前AI率（如果有）
+      if(overall!==null){
+        verdictDesc.textContent=`自动降分进行中：当前AI率约 ${Math.round(overall)}%（已运行 ${Math.round((Date.now()-startedAt)/1000)}s）`;
+      }
+    };
+
+    await poll();
+    pollTimer=setInterval(()=>{poll().catch(()=>{})},1200);
+  }catch(e){
+    stopPolling();
+    showToast("网络错误："+String(e),"err",6000);
+    queue.running=false;
+    rewriteToTargetBtn.disabled=false;
+    updateSelectionUI();
+  }finally{
+    // 不在这里隐藏进度，避免“进度消失像没发生”
+    // 由 completed/failed/cancelled 分支收尾
   }
 });
 
@@ -1457,48 +1573,9 @@ chatSuggestionsEl.addEventListener("click",e=>{
   }
 });
 
-// ══════ ADMIN ══════
-const adminBadge=$("adminBadge"),adminLoginBtn=$("adminLoginBtn");
-
-function updateAdminUI(){
-  if(adminSecret){
-    adminBadge.classList.remove("hidden");
-    adminLoginBtn.title="退出管理员";
-    balanceEl.textContent="∞";
-  }else{
-    adminBadge.classList.add("hidden");
-    adminLoginBtn.title="管理员登录";
-  }
-}
-
-adminLoginBtn.addEventListener("click",async()=>{
-  if(adminSecret){
-    if(!confirm("退出管理员模式？"))return;
-    adminSecret="";localStorage.removeItem(adminSecretKey);
-    updateAdminUI();
-    const b=await fetchBalance();if(b.ok)balanceEl.textContent=String(b.balance);
-    return;
-  }
-  const secret=prompt("请输入管理员密钥：");
-  if(!secret)return;
-  try{
-    const res=await fetch("/api/admin/verify",{method:"POST",headers:{"Content-Type":"application/json"},body:JSON.stringify({secret})});
-    const json=await res.json();
-    if(!json.ok){alert("密钥错误");return}
-    adminSecret=secret;localStorage.setItem(adminSecretKey,secret);
-    updateAdminUI();
-    showToast("已进入管理员模式，积分无限","ok",3000);
-  }catch(e){alert("验证失败："+String(e))}
-});
-
-adminBadge.addEventListener("click",()=>{
-  window.open("/admin.html","_blank");
-});
-
 // ══════ INIT ══════
 
 (async function init(){
-  updateAdminUI();
   // 并行拉取余额和站点配置（含微信联系方式、默认免费积分）
   const [balanceRes, configRes] = await Promise.allSettled([
     fetchBalance(),
@@ -1514,7 +1591,15 @@ adminBadge.addEventListener("click",()=>{
     if(wechatEl&&cfg.contactWechat)wechatEl.textContent=cfg.contactWechat;
     // 更新首页免费积分提示
     const freePtsEl=$("freePtsHint");
-    if(freePtsEl&&cfg.defaultFreePoints)freePtsEl.textContent=String(cfg.defaultFreePoints);
+    const freeWrap=$("freePtsWrap");
+    const freeSep=$("freeSep");
+    const pts=Number(cfg.defaultFreePoints||0);
+    if(freePtsEl)freePtsEl.textContent=String(Math.max(0,Math.floor(pts)));
+    if(freeWrap&&freeSep){
+      const show=pts>0;
+      freeWrap.style.display=show?"inline":"none";
+      freeSep.style.display=show?"inline":"none";
+    }
   }
 })();
 </script>

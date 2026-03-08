@@ -5,6 +5,14 @@ export type DashscopeConfig = {
   apiKey: string;
   baseURL: string;
   model: string;
+  /**
+   * 单次 LLM 请求超时时间（毫秒）。
+   *
+   * 设计原因：
+   * - 自动降分是长任务，任何一次请求“卡死”都会让用户以为系统无响应；
+   * - 超时后由上层将该段落标记为失败并继续处理其它段落，保证整体可交付。
+   */
+  timeoutMs: number;
 };
 
 export function loadDashscopeConfigFromEnv(): DashscopeConfig {
@@ -15,6 +23,7 @@ export function loadDashscopeConfigFromEnv(): DashscopeConfig {
       ""
     );
   const model = process.env.DASHSCOPE_MODEL?.trim() || "qwen-plus-latest";
+  const timeoutMs = Number(process.env.LLM_TIMEOUT_MS ?? "60000");
 
   if (!apiKey) {
     throw new Error(
@@ -22,7 +31,12 @@ export function loadDashscopeConfigFromEnv(): DashscopeConfig {
     );
   }
 
-  return { apiKey, baseURL, model };
+  return {
+    apiKey,
+    baseURL,
+    model,
+    timeoutMs: Number.isFinite(timeoutMs) ? Math.max(5000, Math.floor(timeoutMs)) : 60000,
+  };
 }
 
 /**
@@ -33,7 +47,7 @@ export function loadDashscopeConfigFromEnv(): DashscopeConfig {
  * - 我们通过 `baseURL/model` 可配置，方便你在不同地域/不同模型间切换（qwen-plus/flash/max 等）。
  */
 export function createDashscopeClient(cfg: DashscopeConfig): OpenAI {
-  return new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL });
+  return new OpenAI({ apiKey: cfg.apiKey, baseURL: cfg.baseURL, timeout: cfg.timeoutMs });
 }
 
 export type ChatJsonOptions = {
@@ -49,6 +63,12 @@ export type ChatJsonOptions = {
   purpose: string;
 };
 
+export type LlmUsage = {
+  promptTokens: number;
+  completionTokens: number;
+  totalTokens: number;
+};
+
 /**
  * 调用 Chat Completions 并尽量返回可解析 JSON。
  *
@@ -59,7 +79,9 @@ export type ChatJsonOptions = {
  * 实现方式：
  * - 优先尝试 `response_format: { type: 'json_object' }`；失败则降级为“强约束提示 + 提取 JSON 子串”。
  */
-export async function chatJson<T>(opts: ChatJsonOptions): Promise<{ rawText: string; json: T }> {
+export async function chatJson<T>(
+  opts: ChatJsonOptions
+): Promise<{ rawText: string; json: T; usage?: LlmUsage }> {
   const t0 = Date.now();
   const log = opts.logger;
 
@@ -80,12 +102,13 @@ export async function chatJson<T>(opts: ChatJsonOptions): Promise<{ rawText: str
     });
     const rawText = resp.choices?.[0]?.message?.content ?? "";
     const json = safeParseJson<T>(rawText);
+    const usage = normalizeUsage(resp.usage);
     log.info("LLM chatJson ok", {
       purpose: opts.purpose,
       ms: Date.now() - t0,
       usage: resp.usage,
     });
-    return { rawText, json };
+    return { rawText, json, usage };
   } catch (err) {
     log.warn("LLM chatJson response_format failed; fallback", {
       purpose: opts.purpose,
@@ -98,12 +121,13 @@ export async function chatJson<T>(opts: ChatJsonOptions): Promise<{ rawText: str
   const resp2 = await opts.client.chat.completions.create(basePayload);
   const rawText2 = resp2.choices?.[0]?.message?.content ?? "";
   const json2 = safeParseJson<T>(rawText2);
+  const usage2 = normalizeUsage(resp2.usage);
   log.info("LLM chatJson ok (fallback)", {
     purpose: opts.purpose,
     ms: Date.now() - t0,
     usage: resp2.usage,
   });
-  return { rawText: rawText2, json: json2 };
+  return { rawText: rawText2, json: json2, usage: usage2 };
 }
 
 function safeParseJson<T>(raw: string): T {
@@ -124,5 +148,27 @@ function extractFirstJsonObject(text: string): string {
     throw new Error("LLM output is not valid JSON");
   }
   return text.slice(first, last + 1);
+}
+
+function normalizeUsage(
+  usage:
+    | {
+        prompt_tokens?: number | null;
+        completion_tokens?: number | null;
+        total_tokens?: number | null;
+      }
+    | null
+    | undefined
+): LlmUsage | undefined {
+  if (!usage) return undefined;
+  const pt = Number(usage.prompt_tokens ?? 0);
+  const ct = Number(usage.completion_tokens ?? 0);
+  const tt = Number(usage.total_tokens ?? pt + ct);
+  if (!Number.isFinite(pt) || !Number.isFinite(ct) || !Number.isFinite(tt)) return undefined;
+  return {
+    promptTokens: Math.max(0, Math.floor(pt)),
+    completionTokens: Math.max(0, Math.floor(ct)),
+    totalTokens: Math.max(0, Math.floor(tt)),
+  };
 }
 

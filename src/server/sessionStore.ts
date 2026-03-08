@@ -53,6 +53,11 @@ export type SessionRecord = {
         riskAfter: number;
         similarity: number;
         retryUsed: boolean;
+        /**
+         * 本次 LLM 调用 usage（如服务端返回）。
+         * 用于核算 token 与积分关系，不参与检测/导出逻辑。
+         */
+        usage?: { promptTokens: number; completionTokens: number; totalTokens: number };
       };
     }
   >;
@@ -78,6 +83,75 @@ export type SessionRecord = {
 
   /** 每次改写后自增，用于判断导出是否需要重新回写 */
   revision?: number;
+
+  /**
+   * 自动降分任务状态（用于前端展示真实进度）。
+   *
+   * 设计原因：
+   * - 自动降分是长任务，前端不能只靠“伪进度条”；
+   * - 将任务状态写入会话存储，可被轮询查询，且磁盘模式下可跨刷新保留。
+   */
+  autoRewriteJob?: {
+    jobId: string;
+    status: "queued" | "running" | "completed" | "failed" | "cancelled";
+    createdAt: number;
+    updatedAt: number;
+    finishedAt?: number;
+    params: {
+      targetScore: number;
+      maxRounds: number;
+      perRound: number;
+      maxTotal: number;
+      minParagraphScore: number;
+      maxPerParagraph: number;
+      stopNoImproveRounds: number;
+      /**
+       * 是否允许“事实风险模式”。
+       *
+       * 设计原因：
+       * - 默认严格护栏，宁可少改也不编造；
+       * - 用户明确选择继续时，可允许改写更激进，但需要强提示“需人工核对事实”。
+       */
+      allowFactRisk?: boolean;
+      /**
+       * 优先处理的段落（通常来自上一次被护栏拦截的段落）。
+       * 设计原因：让“继续尝试”能更聚焦，而不是重复改已改完的部分。
+       */
+      preferParagraphIds?: string[];
+    };
+    progress: {
+      roundsUsed: number;
+      /**
+       * 已处理（已尝试）段落数：包含成功与失败。
+       * 设计原因：失败段落同样消耗时间，用户需要看到进度在走，而不是卡住。
+       */
+      processed: number;
+      maxTotal: number;
+      /** 成功改写的段落数（可选，用于更直观的进度反馈） */
+      succeeded?: number;
+      /** 失败/被拦截的段落数（可选，用于更直观的进度反馈） */
+      failed?: number;
+      overallBefore?: number;
+      overallCurrent?: number;
+      currentParagraphId?: string;
+      currentParagraphIndex?: number;
+      lastMessage?: string;
+    };
+    /**
+     * 任务内的逐段失败信息（不中断整体任务）。
+     *
+     * 设计原因：
+     * - 对用户来说“能改的先改掉”比“整单失败”更可接受；
+     * - 把失败原因透明化，便于用户手动修订或选择继续（带风险提示）。
+     */
+    failures?: Array<{
+      paragraphId: string;
+      paragraphIndex?: number;
+      code: string;
+      message: string;
+    }>;
+    error?: { code?: string; message: string };
+  };
 };
 
 export type SessionIndexItem = {

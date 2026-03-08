@@ -6,6 +6,7 @@ import {
   createDashscopeClient,
   loadDashscopeConfigFromEnv,
 } from "./client.js";
+import type { LlmUsage } from "./client.js";
 
 /**
  * 聊天式改写的输出——AI 同时给出自然语言回复和完整改写段落。
@@ -19,6 +20,8 @@ export type ChatRewriteOutput = {
   reply: string;
   /** 完整的改写后段落文本，用户可一键应用到文档 */
   revisedText: string;
+  /** LLM usage（用于 tokens/积分核算） */
+  usage?: LlmUsage;
 };
 
 export type ChatRewriteParams = {
@@ -116,7 +119,7 @@ export async function chatRewrite(
 
   const messages = buildChatRewriteMessages(params);
 
-  const { json } = await chatJson<ChatRewriteOutput>({
+  const { json, usage } = await chatJson<ChatRewriteOutput>({
     logger: params.logger,
     client,
     model: cfg.model,
@@ -131,5 +134,6 @@ export async function chatRewrite(
       typeof json?.revisedText === "string"
         ? json.revisedText
         : params.paragraphText,
+    usage,
   };
 }

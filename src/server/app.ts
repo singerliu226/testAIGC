@@ -42,9 +42,16 @@ export function createApp(params: { logger: AppLogger }) {
   const webDir = path.resolve(__dirname, "../../web");
 
   const adminToken = process.env.ADMIN_PATH_TOKEN?.trim();
+  /**
+   * 管理员面板永远不允许走默认路径。
+   *
+   * 设计原因：
+   * - 前端不再暴露任何管理员入口时，仍需防止用户通过路径扫描命中 `/admin.html`；
+   * - 只允许“知道 token 的人”访问管理面板，满足“只有我知道的方法”。
+   */
+  app.get("/admin.html", (_req, res) => res.status(404).send("Not Found"));
+
   if (adminToken) {
-    // 封锁默认路径，返回 404
-    app.get("/admin.html", (_req, res) => res.status(404).send("Not Found"));
     // 管理面板仅在含 token 的路径下可访问
     app.get(`/admin-${adminToken}.html`, (_req, res) =>
       res.sendFile(path.join(webDir, "admin.html"))
@@ -53,9 +60,7 @@ export function createApp(params: { logger: AppLogger }) {
       path: `/admin-${adminToken}.html`,
     });
   } else {
-    params.logger.warn(
-      "ADMIN_PATH_TOKEN not set — admin panel accessible at /admin.html (set it in production)"
-    );
+    params.logger.warn("ADMIN_PATH_TOKEN not set — admin panel disabled");
   }
 
   app.use("/", express.static(webDir));

@@ -30,3 +30,14 @@ logs/
 
 # Uploads
 uploads/
+
+# Runtime data (redeem codes & audit log)
+data/redeem-codes.json
+data/admin-audit.json
+
+# Generated marketing assets (local only)
+xhs_*.png
+*.docx
+测试报告*.md
+gen_*.cjs
+gen_*.js

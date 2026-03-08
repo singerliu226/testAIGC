@@ -75,6 +75,19 @@ export class FileLedger {
     return xs.slice(Math.max(0, xs.length - limit));
   }
 
+  /**
+   * 列出全部交易（管理员统计用）。
+   *
+   * 设计原因：
+   * - token/积分核算需要汇总所有 CHARGE/REFUND 的 meta；
+   * - 仍保持“账本自身不做复杂统计”，统计逻辑放到上层模块/路由。
+   */
+  listAllTransactions(limit = 5000): LedgerTx[] {
+    const xs = this.state.transactions;
+    const n = Math.max(1, Math.min(200000, Math.floor(limit)));
+    return xs.slice(Math.max(0, xs.length - n));
+  }
+
   topup(accountId: string, points: number, meta?: Record<string, unknown>): LedgerTx {
     const p = Math.max(0, Math.floor(points));
     if (!p) throw new Error("Invalid topup points");
