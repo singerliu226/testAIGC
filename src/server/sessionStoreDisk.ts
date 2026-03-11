@@ -32,10 +32,11 @@ export class DiskSessionStore implements SessionStore {
     fs.mkdirSync(this.root, { recursive: true });
   }
 
-  create(params: { filename: string; originalDocx: Buffer }): SessionRecord {
+  create(params: { filename: string; originalDocx: Buffer; accountId: string }): SessionRecord {
     const sessionId = randomUUID();
     const rec: SessionRecord = {
       sessionId,
+      accountId: params.accountId,
       createdAt: Date.now(),
       filename: params.filename,
       originalDocx: params.originalDocx,
@@ -68,7 +69,11 @@ export class DiskSessionStore implements SessionStore {
     return next;
   }
 
-  list(limit = 50): SessionIndexItem[] {
+  /**
+   * 只返回属于指定账号的会话（按 state.json 中的 accountId 字段过滤）。
+   * 旧版本没有 accountId 字段的记录不会出现在任何用户的列表中，确保安全。
+   */
+  list(accountId: string, limit = 50): SessionIndexItem[] {
     const dirs = safeReadDir(this.root)
       .filter((d) => d.isDirectory())
       .map((d) => d.name);
@@ -79,6 +84,8 @@ export class DiskSessionStore implements SessionStore {
       try {
         const raw = fs.readFileSync(statePath, "utf-8");
         const s = JSON.parse(raw) as SessionRecord;
+        // 只返回属于该账号的会话
+        if (s.accountId !== accountId) continue;
         items.push({
           sessionId: s.sessionId,
           createdAt: s.createdAt,

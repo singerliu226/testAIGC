@@ -8,6 +8,7 @@ import { judgeParagraphWithDashscope } from "../../../llm/judge.js";
 import { asyncHandler } from "../asyncHandler.js";
 import { uploadLimiter } from "../../rateLimit.js";
 import { HttpError } from "../../errors.js";
+import { getAccountIdFromRequestHeader, getDefaultFreePoints, ledger } from "../../../billing/index.js";
 
 export function registerUploadRoutes(params: {
   router: Router;
@@ -31,9 +32,14 @@ export function registerUploadRoutes(params: {
         throw new HttpError(400, "INVALID_FILE", "目前仅支持 .docx");
       }
 
+      // 读取并确保账号存在（创建会话时绑定 accountId，实现用户间数据隔离）
+      const accountId = getAccountIdFromRequestHeader(req.header("x-account-id"));
+      ledger.ensureAccount(accountId, getDefaultFreePoints());
+
       const session = params.store.create({
         filename: decodedFilename,
         originalDocx: file.buffer,
+        accountId,
       });
 
       log.info("Uploaded docx", {

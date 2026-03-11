@@ -11,6 +11,12 @@ import { randomUUID } from "node:crypto";
  */
 export type SessionRecord = {
   sessionId: string;
+  /**
+   * 所有者账号 ID（来自前端 x-account-id 请求头）。
+   * 设计原因：防止不同用户互相查看对方的历史记录，
+   * list/get 接口均需校验此字段。
+   */
+  accountId: string;
   createdAt: number;
   filename: string;
   originalDocx: Buffer;
@@ -165,19 +171,25 @@ export type SessionIndexItem = {
 };
 
 export type SessionStore = {
-  create(params: { filename: string; originalDocx: Buffer }): SessionRecord;
+  create(params: { filename: string; originalDocx: Buffer; accountId: string }): SessionRecord;
   get(sessionId: string): SessionRecord | undefined;
   update(sessionId: string, patch: Partial<SessionRecord>): SessionRecord;
-  list(limit?: number): SessionIndexItem[];
+  /**
+   * 列出指定账号的历史会话（按创建时间倒序）。
+   * @param accountId 只返回该账号创建的会话
+   * @param limit 最多返回条数，默认 30
+   */
+  list(accountId: string, limit?: number): SessionIndexItem[];
 };
 
 export class InMemorySessionStore {
   private readonly sessions = new Map<string, SessionRecord>();
 
-  create(params: { filename: string; originalDocx: Buffer }): SessionRecord {
+  create(params: { filename: string; originalDocx: Buffer; accountId: string }): SessionRecord {
     const sessionId = randomUUID();
     const rec: SessionRecord = {
       sessionId,
+      accountId: params.accountId,
       createdAt: Date.now(),
       filename: params.filename,
       originalDocx: params.originalDocx,
@@ -201,9 +213,13 @@ export class InMemorySessionStore {
     return next;
   }
 
-  list(limit = 50): SessionIndexItem[] {
+  /**
+   * 只返回属于指定账号的会话，确保用户间数据完全隔离。
+   */
+  list(accountId: string, limit = 50): SessionIndexItem[] {
     const items: SessionIndexItem[] = [];
     for (const s of this.sessions.values()) {
+      if (s.accountId !== accountId) continue;
       items.push({
         sessionId: s.sessionId,
         createdAt: s.createdAt,
