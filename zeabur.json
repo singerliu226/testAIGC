@@ -2,5 +2,17 @@
   "$schema": "https://schema.zeabur.app/template.json",
   "build_command": "npm run build",
   "start_command": "npm start",
-  "output_dir": "dist"
+  "output_dir": "dist",
+  "volumes": [
+    {
+      "path": "/app/data",
+      "description": "持久化存储：兑换码、积分账本、审计日志"
+    }
+  ],
+  "env": {
+    "DATA_DIR": {
+      "default": "/app/data",
+      "description": "数据存储目录（兑换码/积分账本/审计日志），建议挂载持久化卷"
+    }
+  }
 }
