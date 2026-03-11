@@ -910,7 +910,10 @@ uploadBtn.addEventListener("click",async()=>{
     const ctrl=new AbortController();
     const timer=setTimeout(()=>ctrl.abort(),300000);
     let pct=10;const pTimer=setInterval(()=>{pct=Math.min(pct+2,85);uploadProgressBar.style.width=pct+"%"},1500);
-    const res=await fetch("/api/upload",{method:"POST",body:fd,signal:ctrl.signal});
+    // 上传时需传入 x-account-id（不可用 getHeaders()，会覆盖 FormData 的 multipart Content-Type）
+    const uploadHeaders={"x-account-id":accountId};
+    if(adminSecret)uploadHeaders["x-admin-secret"]=adminSecret;
+    const res=await fetch("/api/upload",{method:"POST",headers:uploadHeaders,body:fd,signal:ctrl.signal});
     clearTimeout(timer);clearInterval(pTimer);
     const json=await res.json();
     uploadProgressBar.style.width="90%";

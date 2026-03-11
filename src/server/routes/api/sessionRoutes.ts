@@ -37,8 +37,9 @@ export function registerSessionRoutes(params: { router: Router; store: SessionSt
       const session = params.store.get(sessionId);
       if (!session) throw new HttpError(404, "SESSION_NOT_FOUND", "找不到该会话");
 
-      // 防止越权访问：session 必须属于当前请求账号
-      if (session.accountId !== accountId) {
+      // 防止越权访问：session 必须属于当前请求账号。
+      // 兼容性：旧会话（无 accountId 字段）不拦截，避免历史会话突然不可访问。
+      if (session.accountId && session.accountId !== accountId) {
         throw new HttpError(403, "SESSION_ACCESS_DENIED", "无权访问该会话");
       }
 
