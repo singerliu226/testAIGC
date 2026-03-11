@@ -20,7 +20,7 @@ export type SessionRecord = {
     id: string;
     index: number;
     text: string;
-    kind: "paragraph" | "tableCellParagraph";
+    kind: "paragraph" | "tableCellParagraph" | "imageParagraph";
   }>;
 
   /** 检测报告（后续分析器会填充） */

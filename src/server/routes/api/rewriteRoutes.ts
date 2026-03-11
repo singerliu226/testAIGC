@@ -508,12 +508,14 @@ export function registerRewriteRoutes(params: { router: Router; logger: AppLogge
       const body = z
         .object({
           targetScore: z.number().int().min(0).max(100).optional().default(15),
-          maxRounds: z.number().int().min(1).max(12).optional().default(6),
-          perRound: z.number().int().min(1).max(20).optional().default(8),
-          maxTotal: z.number().int().min(1).max(60).optional().default(30),
+          maxRounds: z.number().int().min(1).max(20).optional().default(6),
+          perRound: z.number().int().min(1).max(200).optional().default(8),
+          maxTotal: z.number().int().min(1).max(500).optional().default(30),
           minParagraphScore: z.number().int().min(0).max(100).optional().default(35),
           maxPerParagraph: z.number().int().min(1).max(5).optional().default(2),
-          stopNoImproveRounds: z.number().int().min(1).max(5).optional().default(2),
+          stopNoImproveRounds: z.number().int().min(1).max(10).optional().default(2),
+          allowFactRisk: z.boolean().optional().default(false),
+          preferParagraphIds: z.array(z.string()).optional().default([]),
         })
         .parse(req.body ?? {});
 
@@ -744,7 +746,7 @@ async function rewriteOne(params: RewriteOneParams): Promise<{
 }
 
 function mergeParagraphs(
-  paragraphs: Array<{ id: string; index: number; kind: "paragraph" | "tableCellParagraph"; text: string }>,
+  paragraphs: Array<{ id: string; index: number; kind: "paragraph" | "tableCellParagraph" | "imageParagraph"; text: string }>,
   revised: Record<string, string>
 ) {
   return paragraphs.map((p) => ({
@@ -802,7 +804,7 @@ function normalizeForSimilarity(s: string): string {
  */
 function safeParagraphRiskScore(
   text: string,
-  p: { id: string; index: number; kind: "paragraph" | "tableCellParagraph"; text: string }
+  p: { id: string; index: number; kind: "paragraph" | "tableCellParagraph" | "imageParagraph"; text: string }
 ): number {
   try {
     const r = detectAigcRisk([{ id: p.id, index: p.index, kind: p.kind, text }]);

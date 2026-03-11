@@ -37,7 +37,7 @@ export type FindingSignal = {
 export type ParagraphReport = {
   paragraphId: string;
   index: number;
-  kind: "paragraph" | "tableCellParagraph";
+  kind: "paragraph" | "tableCellParagraph" | "imageParagraph";
   /** 原段落文本（可用于 UI 展示；如担心隐私可在服务端做截断） */
   text: string;
   riskScore: number; // 0..100

@@ -173,12 +173,12 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
       <div class="card-body">
         <div style="font-size:13px;font-weight:600;color:var(--g700);margin-bottom:8px">选择套餐</div>
         <div class="pkg-row" id="pkgSelector">
-          <button class="pkg-btn sel" data-pts="100" data-name="体验包 ¥9.9">
+          <button class="pkg-btn" data-pts="100" data-name="体验包 ¥9.9">
             <div class="pb-name">体验包</div>
             <div class="pb-price">¥9.9</div>
             <div class="pb-pts">100 积分</div>
           </button>
-          <button class="pkg-btn" data-pts="400" data-name="基础包 ¥29.9">
+          <button class="pkg-btn sel" data-pts="400" data-name="基础包 ¥29.9">
             <div class="pb-name">基础包</div>
             <div class="pb-price">¥29.9</div>
             <div class="pb-pts">400 积分</div>
@@ -193,6 +193,10 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
           <div class="form-group">
             <div class="form-label">生成数量</div>
             <input class="form-input" id="genCount" type="number" min="1" max="200" value="10" />
+          </div>
+          <div class="form-group" style="flex:1;min-width:160px">
+            <div class="form-label">当前选中套餐</div>
+            <div id="selectedPkgDisplay" style="padding:8px 12px;background:var(--pri-l);border:1.5px solid var(--pri);border-radius:8px;font-size:13px;font-weight:700;color:var(--pri);font-family:var(--font-sans)">基础包 ¥29.9 · 400积分</div>
           </div>
           <button class="btn btn-primary" id="genCodesBtn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg>
@@ -271,7 +275,8 @@ const SESSION_TTL = 2 * 60 * 60 * 1000;
 
 let secret=localStorage.getItem(adminSecretKey)||"";
 let loginTime=Number(localStorage.getItem(adminLoginTimeKey)||"0");
-let selectedPkg={pts:100,name:"体验包 ¥9.9"};
+// 默认选中最常用的基础包 ¥29.9，避免管理员未注意仍在 9.9 状态下误生成错误积分的码
+let selectedPkg={pts:400,name:"基础包 ¥29.9"};
 let lastGeneratedCodes=[];
 let countdownTimer=null;
 
@@ -341,12 +346,17 @@ document.querySelectorAll(".tab-item").forEach(tab=>{
 });
 
 // ── 套餐选择 ──
+function updateSelectedPkgDisplay(){
+  const el=$("selectedPkgDisplay");
+  if(el)el.textContent=`${selectedPkg.name} · ${selectedPkg.pts}积分`;
+}
 pkgSelector.addEventListener("click",e=>{
   const btn=e.target.closest("[data-pts]");
   if(!btn)return;
   pkgSelector.querySelectorAll(".pkg-btn").forEach(b=>b.classList.remove("sel"));
   btn.classList.add("sel");
   selectedPkg={pts:Number(btn.dataset.pts),name:btn.dataset.name};
+  updateSelectedPkgDisplay();
 });
 
 // ── 登录 ──

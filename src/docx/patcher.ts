@@ -29,6 +29,8 @@ export async function patchDocxParagraphs(
 
   const newParts = parts.map((p) => {
     if (p.type !== "paragraph") return p;
+    // 图片/图形段落不做任何文本替换，直接原样保留，防止覆盖图片 XML 导致格式损坏
+    if (p.paragraph.kind === "imageParagraph") return p;
     const nextText = replacements[p.paragraph.id];
     if (typeof nextText !== "string") return p;
     return {

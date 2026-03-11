@@ -1146,8 +1146,21 @@ const pricingModal=$("pricingModal"),pricingClose=$("pricingClose"),redeemInput=
 /**
  * 打开购买积分弹窗，替换旧的 prompt() 充值入口。
  * 采用"先付款→发码→用户兑换"模式，适配小红书等无支付接口的销售渠道。
+ *
+ * 每次打开弹窗都重置套餐高亮为「基础包 ¥29.9」（默认推荐套餐），
+ * 避免用户上次误点其他套餐后再次打开仍看到错误高亮，造成"我买了29.9但显示79.9"的困惑。
  */
-topupBtn.addEventListener("click",()=>pricingModal.classList.add("open"));
+function openPricingModal(){
+  // 重置套餐卡片高亮到默认推荐套餐（基础包 ¥29.9）
+  $("pkgGrid").querySelectorAll(".pkg-card").forEach(c=>c.classList.remove("hot"));
+  const defaultCard=$("pkgGrid").querySelector("[data-pkg='base']");
+  if(defaultCard)defaultCard.classList.add("hot");
+  // 清空上次兑换结果提示，避免残留信息误导用户
+  redeemResult.style.display="none";
+  redeemInput.value="";
+  pricingModal.classList.add("open");
+}
+topupBtn.addEventListener("click",openPricingModal);
 pricingClose.addEventListener("click",()=>pricingModal.classList.remove("open"));
 pricingModal.addEventListener("click",e=>{if(e.target===pricingModal)pricingModal.classList.remove("open")});
 

@@ -85,11 +85,36 @@ export async function rewriteParagraphWithDashscope(
   if (factLocked) {
     const ph = validatePlaceholders({ text: revisedMasked, items: factLocked.items });
     if (!ph.ok) {
-      params.logger.warn("Fact lock placeholders missing", {
+      params.logger.warn("Fact lock placeholders missing, falling back to no-factLock rewrite", {
         purpose,
         missing: ph.missing.slice(0, 6),
       });
-      throw new Error(`LLM output lost placeholders: ${ph.missing.slice(0, 3).join(", ")}`);
+      // 占位符丢失时，降级为不带 factLock 的重写，避免整段失败浪费用户时间
+      const { json: json2, usage: usage2 } = await chatJson<RewriteOutput>({
+        logger: params.logger,
+        client,
+        model: cfg.model,
+        purpose: purpose + ".fallback",
+        temperature,
+        messages: buildRewriteMessages({
+          paragraphText: params.paragraphText,
+          contextBefore: params.contextBefore,
+          contextAfter: params.contextAfter,
+          signals: params.signals,
+          guardViolationsHint: params.guardViolationsHint,
+        }, { mode, minChangeRatio: params.minChangeRatio, factLock: false }),
+      });
+      if (!json2?.revisedText || typeof json2.revisedText !== "string") {
+        throw new Error("LLM fallback rewrite output missing revisedText");
+      }
+      return {
+        revisedText: json2.revisedText,
+        changeRationale: Array.isArray(json2.changeRationale) ? json2.changeRationale : [],
+        riskSignalsResolved: Array.isArray(json2.riskSignalsResolved) ? json2.riskSignalsResolved : [],
+        needHumanCheck: Array.isArray(json2.needHumanCheck) ? json2.needHumanCheck : [],
+        humanFeatures: Array.isArray(json2.humanFeatures) ? json2.humanFeatures : [],
+        usage: usage2,
+      };
     }
   }
 

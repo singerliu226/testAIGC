@@ -22,6 +22,14 @@ export type RewriteOneInternalResult =
       failure: { code: string; message: string };
     };
 
+/**
+ * 单段自动改写的核心流程：最多执行 3 次 LLM 调用（aggressive → repair → sanitize 兜底）。
+ *
+ * 设计原因：
+ * - 自动降分场景中"能改多少改多少"比"遇拦截就失败"更重要；
+ * - 3 层级联策略：先 aggressive+factLock，护栏不通则 repair，最后 sanitizeNewAnchors 兜底；
+ * - 每层都先评估是否必要，避免浪费 LLM 调用。
+ */
 export async function rewriteOneInternal(params: {
   deps: RewriteOneInternalDeps;
   logger: AppLogger;
@@ -42,185 +50,44 @@ export async function rewriteOneInternal(params: {
   const prechargePoints = estimatePrechargePoints({ text: params.baseText, cfg });
 
   if (!params.isAdmin) {
-    ledger.charge(params.accountId, prechargePoints, {
-      billing: "llm",
-      callId,
-      type: params.type,
-      sessionId: params.sessionId,
-      paragraphId: params.paragraph.id,
-      pointsEstimated: prechargePoints,
-      billingMode: cfg.mode,
-    });
+    try {
+      ledger.charge(params.accountId, prechargePoints, {
+        billing: "llm",
+        callId,
+        type: params.type,
+        sessionId: params.sessionId,
+        paragraphId: params.paragraph.id,
+        pointsEstimated: prechargePoints,
+        billingMode: cfg.mode,
+      });
+    } catch {
+      // 积分不足时返回 failure，让 job 继续处理其他段落，不崩整个任务
+      return { ok: false, failure: { code: "INSUFFICIENT_POINTS", message: "积分不足，该段落跳过" } };
+    }
   }
 
-  try {
-    /**
-     * 自动降分的高风险段落（>=70）更需要“结构级重写”，否则容易出现“改了但分不动”。
-     * 因此：auto + high risk 默认直接走 aggressive + factLock（风险模式除外）。
-     */
-    const startAggressive = params.type === "auto" && params.riskBefore >= 70 && !params.allowFactRisk;
-    const attempt1 = await rewriteParagraphWithDashscope({
-      logger: params.logger,
-      paragraphText: params.baseText,
-      contextBefore: params.contextBefore,
-      contextAfter: params.contextAfter,
-      signals: params.signals,
-      rewriteMode: startAggressive ? "aggressive" : "normal",
-      minChangeRatio: startAggressive ? 0.32 : undefined,
-      factLock: startAggressive,
-    });
-    const guard1 = params.allowFactRisk
-      ? ({ ok: true } as const)
-      : validateRewriteGuard({
-          originalText: params.paragraph.text,
-          revisedText: attempt1.revisedText,
-        });
+  // 内部辅助：用当前 chosen/chosenSim/chosenRiskAfter 构建成功返回
+  let chosen: Awaited<ReturnType<typeof rewriteParagraphWithDashscope>>;
+  let retryUsed = false;
+  let chosenSim = 0;
+  let chosenRiskAfter = 0;
 
-    const sim1 = bigramJaccardSimilarity(params.paragraph.text, attempt1.revisedText);
-    const riskAfter1 = safeParagraphRiskScore(attempt1.revisedText, params.paragraph);
-
-    const needsRetry = !guard1.ok || sim1 >= 0.92 || riskAfter1 >= params.riskBefore - 5;
-    let chosen = attempt1;
-    let retryUsed = false;
-    let chosenSim = sim1;
-    let chosenRiskAfter = riskAfter1;
-
-    if (needsRetry) {
-      retryUsed = true;
-      const attempt2 = await rewriteParagraphWithDashscope({
-        logger: params.logger,
-        paragraphText: params.baseText,
-        contextBefore: params.contextBefore,
-        contextAfter: params.contextAfter,
-        signals: params.signals,
-        rewriteMode: "aggressive",
-        minChangeRatio: 0.3,
-        // 强力改写阶段启用事实锚点锁定：允许更激进的结构改写，同时降低护栏拦截率
-        factLock: !params.allowFactRisk,
-      });
-      const guard2 = params.allowFactRisk
-        ? ({ ok: true } as const)
-        : validateRewriteGuard({
-            originalText: params.paragraph.text,
-            revisedText: attempt2.revisedText,
-          });
-      if (!guard2.ok) {
-        // 关键：不要直接失败。把护栏拦截原因反馈给模型，让其“删除新增锚点并重写”
-        const hint = guard2.violations
-          .slice(0, 6)
-          .map((v) => `${v.ruleId}:${v.evidence}`)
-          .join("；");
-        const attempt3 = await rewriteParagraphWithDashscope({
-          logger: params.logger,
-          paragraphText: params.baseText,
-          contextBefore: params.contextBefore,
-          contextAfter: params.contextAfter,
-          signals: params.signals,
-          rewriteMode: "repair",
-          // 修复阶段同样启用事实锁定（风险模式除外）
-          factLock: !params.allowFactRisk,
-          guardViolationsHint: hint,
-        });
-        const guard3 = params.allowFactRisk
-          ? ({ ok: true } as const)
-          : validateRewriteGuard({
-              originalText: params.paragraph.text,
-              revisedText: attempt3.revisedText,
-            });
-        if (!guard3.ok) {
-          // 最后一层兜底：若只是“新增地点/机构”，自动泛化替换后再校验，尽量让段落落地
-          const fixed = sanitizeNewAnchors(attempt3.revisedText, guard3.violations);
-          if (fixed.changed) {
-            const guard4 = validateRewriteGuard({
-              originalText: params.paragraph.text,
-              revisedText: fixed.text,
-            });
-            if (guard4.ok) {
-              chosen = {
-                ...attempt3,
-                revisedText: fixed.text,
-                needHumanCheck: [
-                  ...(attempt3.needHumanCheck ?? []),
-                  "系统已自动将新增地点/机构替换为泛化表达（如“部分地区/相关机构”），请人工确认语义是否仍准确。",
-                ],
-              };
-              chosenSim = bigramJaccardSimilarity(params.paragraph.text, fixed.text);
-              chosenRiskAfter = safeParagraphRiskScore(fixed.text, params.paragraph);
-            } else {
-              const summary = guard4.violations
-                .slice(0, 3)
-                .map((v) => `${v.ruleId}:${v.evidence}`)
-                .join("；");
-              return {
-                ok: false,
-                failure: {
-                  code: "REWRITE_GUARDRAIL",
-                  message: `该段改写被拦截（修复/自动泛化后仍失败）：${summary}`,
-                },
-              };
-            }
-          } else {
-            const summary = guard3.violations
-              .slice(0, 3)
-              .map((v) => `${v.ruleId}:${v.evidence}`)
-              .join("；");
-            return {
-              ok: false,
-              failure: {
-                code: "REWRITE_GUARDRAIL",
-                message: `该段改写被拦截（修复重试后仍失败）：${summary}`,
-              },
-            };
-          }
-        } else {
-          // repair 合格，直接采用
-          chosen = attempt3;
-          chosenSim = bigramJaccardSimilarity(params.paragraph.text, attempt3.revisedText);
-          chosenRiskAfter = safeParagraphRiskScore(attempt3.revisedText, params.paragraph);
-        }
-      }
-      const sim2 = bigramJaccardSimilarity(params.paragraph.text, attempt2.revisedText);
-      const riskAfter2 = safeParagraphRiskScore(attempt2.revisedText, params.paragraph);
-
-      // 两者都合规时，优先降分更明显；降分一致则选更不相似的
-      if (riskAfter2 < riskAfter1 || (riskAfter2 === riskAfter1 && sim2 < sim1)) {
-        chosen = attempt2;
-        chosenSim = sim2;
-        chosenRiskAfter = riskAfter2;
-      }
-    }
-
-    const finalPoints = calcFinalChargePoints({
-      text: chosen.revisedText,
-      usage: chosen.usage,
-      cfg,
-    });
+  const buildSuccess = (): RewriteOneInternalResult => {
+    const finalPoints = calcFinalChargePoints({ text: chosen.revisedText, usage: chosen.usage, cfg });
     const settle = finalPoints - prechargePoints;
-
     if (!params.isAdmin && settle !== 0) {
       if (settle > 0) {
         try {
           ledger.charge(params.accountId, settle, {
-            billing: "llm",
-            callId,
-            type: params.type,
-            sessionId: params.sessionId,
-            paragraphId: params.paragraph.id,
-            pointsExtra: settle,
-            pointsFinal: finalPoints,
-            usage: chosen.usage,
-            billingMode: cfg.mode,
+            billing: "llm", callId, type: params.type, sessionId: params.sessionId,
+            paragraphId: params.paragraph.id, pointsExtra: settle, pointsFinal: finalPoints,
+            usage: chosen.usage, billingMode: cfg.mode,
           });
         } catch {
           try {
             ledger.refund(params.accountId, prechargePoints, {
-              billing: "llm",
-              callId,
-              type: params.type,
-              sessionId: params.sessionId,
-              paragraphId: params.paragraph.id,
-              reason: "settle_insufficient",
-              pointsEstimated: prechargePoints,
+              billing: "llm", callId, type: params.type, sessionId: params.sessionId,
+              paragraphId: params.paragraph.id, reason: "settle_insufficient", pointsEstimated: prechargePoints,
             });
           } catch {}
           throw new HttpError(402, "INSUFFICIENT_POINTS", "积分不足：请联系管理员充值");
@@ -228,20 +95,13 @@ export async function rewriteOneInternal(params: {
       } else {
         try {
           ledger.refund(params.accountId, Math.abs(settle), {
-            billing: "llm",
-            callId,
-            type: params.type,
-            sessionId: params.sessionId,
-            paragraphId: params.paragraph.id,
-            pointsRefund: Math.abs(settle),
-            pointsFinal: finalPoints,
-            usage: chosen.usage,
-            billingMode: cfg.mode,
+            billing: "llm", callId, type: params.type, sessionId: params.sessionId,
+            paragraphId: params.paragraph.id, pointsRefund: Math.abs(settle), pointsFinal: finalPoints,
+            usage: chosen.usage, billingMode: cfg.mode,
           });
         } catch {}
       }
     }
-
     return {
       ok: true,
       revisedText: chosen.revisedText,
@@ -263,6 +123,160 @@ export async function rewriteOneInternal(params: {
           retryUsed,
           usage: chosen.usage,
         },
+      },
+    };
+  };
+
+  try {
+    /**
+     * 自动降分的高风险段落（>=70）更需要"结构级重写"，否则容易出现"改了但分不动"。
+     * 因此：auto + high risk 默认直接走 aggressive + factLock（风险模式除外）。
+     */
+    const startAggressive = params.type === "auto" && params.riskBefore >= 70 && !params.allowFactRisk;
+    const attempt1 = await rewriteParagraphWithDashscope({
+      logger: params.logger,
+      paragraphText: params.baseText,
+      contextBefore: params.contextBefore,
+      contextAfter: params.contextAfter,
+      signals: params.signals,
+      rewriteMode: startAggressive ? "aggressive" : "normal",
+      minChangeRatio: startAggressive ? 0.35 : undefined,
+      factLock: startAggressive,
+    });
+    const guard1 = params.allowFactRisk
+      ? ({ ok: true } as const)
+      : validateRewriteGuard({
+          originalText: params.paragraph.text,
+          revisedText: attempt1.revisedText,
+        });
+
+    const sim1 = bigramJaccardSimilarity(params.paragraph.text, attempt1.revisedText);
+    const riskAfter1 = safeParagraphRiskScore(attempt1.revisedText, params.paragraph);
+
+    // 重试条件：护栏不合规 / 改动太小（相似度>0.92）/ 降分不足 15 分
+    const needsRetry = !guard1.ok || sim1 >= 0.92 || riskAfter1 >= params.riskBefore - 15;
+
+    chosen = attempt1;
+    chosenSim = sim1;
+    chosenRiskAfter = riskAfter1;
+
+    if (!needsRetry) {
+      // attempt1 已足够，直接返回
+      return buildSuccess();
+    }
+
+    retryUsed = true;
+
+    // === attempt2: aggressive + factLock ===
+    const attempt2 = await rewriteParagraphWithDashscope({
+      logger: params.logger,
+      paragraphText: params.baseText,
+      contextBefore: params.contextBefore,
+      contextAfter: params.contextAfter,
+      signals: params.signals,
+      rewriteMode: "aggressive",
+      minChangeRatio: 0.35,
+      // 强力改写阶段启用事实锚点锁定：允许更激进的结构改写，同时降低护栏拦截率
+      factLock: !params.allowFactRisk,
+    });
+    const guard2 = params.allowFactRisk
+      ? ({ ok: true } as const)
+      : validateRewriteGuard({
+          originalText: params.paragraph.text,
+          revisedText: attempt2.revisedText,
+        });
+
+    if (guard2.ok) {
+      // attempt2 通过护栏，与 attempt1 比较，选更优的
+      const sim2 = bigramJaccardSimilarity(params.paragraph.text, attempt2.revisedText);
+      const riskAfter2 = safeParagraphRiskScore(attempt2.revisedText, params.paragraph);
+      // 优先降分幅度更大；相同时选相似度更低的
+      if (riskAfter2 < riskAfter1 || (riskAfter2 === riskAfter1 && sim2 < sim1)) {
+        chosen = attempt2;
+        chosenSim = sim2;
+        chosenRiskAfter = riskAfter2;
+      }
+      return buildSuccess();
+    }
+
+    // === attempt3: repair 模式，将违规原因反馈给 LLM ===
+    // attempt2 护栏失败，不能直接使用；进入 repair 流程
+    const hint = guard2.violations
+      .slice(0, 6)
+      .map((v) => `${v.ruleId}:${v.evidence}`)
+      .join("；");
+    const attempt3 = await rewriteParagraphWithDashscope({
+      logger: params.logger,
+      paragraphText: params.baseText,
+      contextBefore: params.contextBefore,
+      contextAfter: params.contextAfter,
+      signals: params.signals,
+      rewriteMode: "repair",
+      // 修复阶段同样启用事实锁定（风险模式除外）
+      factLock: !params.allowFactRisk,
+      guardViolationsHint: hint,
+    });
+    const guard3 = params.allowFactRisk
+      ? ({ ok: true } as const)
+      : validateRewriteGuard({
+          originalText: params.paragraph.text,
+          revisedText: attempt3.revisedText,
+        });
+
+    if (guard3.ok) {
+      // repair 合格，与 attempt1 比较
+      const sim3 = bigramJaccardSimilarity(params.paragraph.text, attempt3.revisedText);
+      const riskAfter3 = safeParagraphRiskScore(attempt3.revisedText, params.paragraph);
+      if (riskAfter3 < riskAfter1 || (riskAfter3 === riskAfter1 && sim3 < sim1)) {
+        chosen = attempt3;
+        chosenSim = sim3;
+        chosenRiskAfter = riskAfter3;
+      }
+      return buildSuccess();
+    }
+
+    // === 最终兜底：自动泛化替换地点/机构后再校验 ===
+    const fixed = sanitizeNewAnchors(attempt3.revisedText, guard3.violations);
+    if (fixed.changed) {
+      const guard4 = validateRewriteGuard({
+        originalText: params.paragraph.text,
+        revisedText: fixed.text,
+      });
+      if (guard4.ok) {
+        chosen = {
+          ...attempt3,
+          revisedText: fixed.text,
+          needHumanCheck: [
+            ...(attempt3.needHumanCheck ?? []),
+            "系统已自动将新增地点/机构替换为泛化表达（如'部分地区/相关机构'），请人工确认语义是否仍准确。",
+          ],
+        };
+        chosenSim = bigramJaccardSimilarity(params.paragraph.text, fixed.text);
+        chosenRiskAfter = safeParagraphRiskScore(fixed.text, params.paragraph);
+        return buildSuccess();
+      }
+      const summary = guard4.violations
+        .slice(0, 3)
+        .map((v) => `${v.ruleId}:${v.evidence}`)
+        .join("；");
+      return {
+        ok: false,
+        failure: {
+          code: "REWRITE_GUARDRAIL",
+          message: `该段改写被拦截（修复/自动泛化后仍失败）：${summary}`,
+        },
+      };
+    }
+
+    const summary = guard3.violations
+      .slice(0, 3)
+      .map((v) => `${v.ruleId}:${v.evidence}`)
+      .join("；");
+    return {
+      ok: false,
+      failure: {
+        code: "REWRITE_GUARDRAIL",
+        message: `该段改写被拦截（修复重试后仍失败）：${summary}`,
       },
     };
   } catch (e) {
@@ -287,7 +301,7 @@ export async function rewriteOneInternal(params: {
 
 function safeParagraphRiskScore(
   text: string,
-  p: { id: string; index: number; kind: "paragraph" | "tableCellParagraph"; text: string }
+  p: { id: string; index: number; kind: "paragraph" | "tableCellParagraph" | "imageParagraph"; text: string }
 ): number {
   try {
     const r = detectAigcRisk([{ id: p.id, index: p.index, kind: p.kind, text }]);
@@ -324,7 +338,7 @@ function bigramJaccardSimilarity(aRaw: string, bRaw: string): number {
 function normalizeForSimilarity(s: string): string {
   return String(s ?? "")
     .replace(/\s+/g, "")
-    .replace(/[，。；：、！？“”‘’（）()【】\[\]{}<>《》…—\-·•]/g, "")
+    .replace(/[，。；：、！？""''（）()【】\[\]{}<>《》…—\-·•]/g, "")
     .trim();
 }
 
@@ -349,8 +363,13 @@ function sanitizeNewAnchors(
     if (v.ruleId === "new_places") {
       for (const frag of extractList(v.evidence)) {
         if (!frag) continue;
+        // 使用不含地理后缀的泛化词，避免自身再被 extractPlaceLike 命中
         const repl =
-          /(?:路|街|大道|巷)$/.test(frag) ? "某地" : /(?:省|市|区|县|镇|乡|港|站|桥|河|湖|山)$/.test(frag) ? "部分地区" : "相关地区";
+          /(?:路|街|大道|巷)$/.test(frag)
+            ? "某处"
+            : /(?:省|市|区|县|镇|乡|港|站|桥|河|湖|山)$/.test(frag)
+            ? "某地"
+            : "相关区域";
         if (out.includes(frag)) {
           out = out.split(frag).join(repl);
           changed = true;
@@ -371,4 +390,3 @@ function sanitizeNewAnchors(
 
   return { text: out, changed };
 }
-

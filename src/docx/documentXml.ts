@@ -1,6 +1,6 @@
 import { decodeXmlText } from "./xmlText.js";
 
-export type DocxParagraphKind = "paragraph" | "tableCellParagraph";
+export type DocxParagraphKind = "paragraph" | "tableCellParagraph" | "imageParagraph";
 
 export type DocxParagraph = {
   id: string;
@@ -21,15 +21,52 @@ export type DocumentXmlParts =
   | { type: "paragraph"; paragraph: DocxParagraph };
 
 /**
+ * 屏蔽 XML 中包含嵌套 `<w:p>` 的容器结构，替换为编号占位符。
+ *
+ * 设计原因：
+ * - OOXML 中 `<wps:txbx>`、`<v:textbox>`、`<w:txbxContent>`、`<mc:AlternateContent>` 等结构内部
+ *   可能包含嵌套的 `<w:p>`，会干扰外层段落正则的配对逻辑。
+ * - 屏蔽后，段落正则只看到"干净"的顶层 `<w:p>`，不再有嵌套干扰。
+ *
+ * 实现方式：
+ * - 按特定标签名做贪婪替换，将每个匹配块存入 `map` 数组，原位置写入 `\x00SHIELD{i}\x00`。
+ * - 支持同名标签的嵌套（使用 JS replace 的全局贪婪特性）。
+ */
+function shieldNestedBlocks(xml: string): { xml: string; map: string[] } {
+  const map: string[] = [];
+  // 需要屏蔽的容器标签（可能包含内层 <w:p>）
+  const containerRe =
+    /<(wps:txbx|v:textbox|w:txbxContent|mc:AlternateContent)\b[\s\S]*?<\/\1>/g;
+  const shielded = xml.replace(containerRe, (match) => {
+    const idx = map.length;
+    map.push(match);
+    return `\x00SHIELD${idx}\x00`;
+  });
+  return { xml: shielded, map };
+}
+
+/**
+ * 将占位符还原为原始 XML 片段。
+ */
+function restoreShields(xml: string, map: string[]): string {
+  return xml.replace(/\x00SHIELD(\d+)\x00/g, (_, i) => map[Number(i)]);
+}
+
+/** 包含这些 XML 信号的段落被视为图片/图形段落，改写时跳过以防止格式损坏。 */
+const IMAGE_SIGNALS = ["<w:drawing", "<wps:wsp", "<v:shape", "<v:pict"];
+
+/**
  * 从 `word/document.xml` 中按顺序提取段落（含表格单元格内段落）。
  *
  * 设计原因：
- * - “尽量保排版”的关键是：不要重建整份 OOXML，而是对既有 `<w:p>` 进行“局部替换”。
+ * - "尽量保排版"的关键是：不要重建整份 OOXML，而是对既有 `<w:p>` 进行"局部替换"。
  * - 解析阶段先保留每个 `<w:p>` 的原始 XML，后续回写只替换其内部文本 run。
+ * - 对含图片/图形的段落打 `imageParagraph` 标记，patching 时跳过以防格式损坏。
  *
  * 实现方式：
- * - 用正则做 **流式切片**：把 document.xml 分成 chunk 与 paragraph 交替的 parts。
- * - 同时用 `w:tc` 深度粗略判断“是否来自表格单元格”，便于 UI 标注。
+ * - 先调用 `shieldNestedBlocks` 屏蔽可能含嵌套 `<w:p>` 的结构，消除正则配对歧义。
+ * - 对屏蔽后的 XML 用正则做 **流式切片**，再逐段调用 `restoreShields` 还原。
+ * - 同时用 `w:tc` 深度粗略判断"是否来自表格单元格"，便于 UI 标注。
  */
 export function splitDocumentXmlIntoParts(documentXml: string): {
   parts: DocumentXmlParts[];
@@ -38,6 +75,9 @@ export function splitDocumentXmlIntoParts(documentXml: string): {
   const parts: DocumentXmlParts[] = [];
   const paragraphs: DocxParagraph[] = [];
 
+  // 屏蔽含嵌套 <w:p> 的容器结构，防止正则误配对导致段落 ID 错位
+  const { xml: shieldedXml, map: shieldMap } = shieldNestedBlocks(documentXml);
+
   const paragraphRe = /<w:p\b[\s\S]*?<\/w:p>/g;
 
   let lastIndex = 0;
@@ -45,7 +85,7 @@ export function splitDocumentXmlIntoParts(documentXml: string): {
   let tcDepth = 0;
 
   function updateTableCellDepth(xmlChunk: string) {
-    // 这不是完整 XML 解析，只是用于“粗标注”。
+    // 这不是完整 XML 解析，只是用于"粗标注"。
     const openRe = /<w:tc\b/g;
     const closeRe = /<\/w:tc>/g;
     let m: RegExpExecArray | null;
@@ -54,18 +94,27 @@ export function splitDocumentXmlIntoParts(documentXml: string): {
   }
 
   let match: RegExpExecArray | null;
-  while ((match = paragraphRe.exec(documentXml))) {
+  while ((match = paragraphRe.exec(shieldedXml))) {
     const start = match.index;
     const end = paragraphRe.lastIndex;
 
-    const before = documentXml.slice(lastIndex, start);
-    if (before) {
+    // 还原 before chunk 中的屏蔽块
+    const beforeShielded = shieldedXml.slice(lastIndex, start);
+    if (beforeShielded) {
+      const before = restoreShields(beforeShielded, shieldMap);
       updateTableCellDepth(before);
       parts.push({ type: "chunk", xml: before });
     }
 
-    const paraXml = match[0];
-    const kind: DocxParagraphKind = tcDepth > 0 ? "tableCellParagraph" : "paragraph";
+    // 还原段落 XML 中的屏蔽块（如文本框内容）
+    const paraXml = restoreShields(match[0], shieldMap);
+
+    const isImageParagraph = IMAGE_SIGNALS.some((s) => paraXml.includes(s));
+    const kind: DocxParagraphKind = isImageParagraph
+      ? "imageParagraph"
+      : tcDepth > 0
+      ? "tableCellParagraph"
+      : "paragraph";
 
     const paragraph: DocxParagraph = {
       id: `p-${paraIndex}`,
@@ -85,8 +134,11 @@ export function splitDocumentXmlIntoParts(documentXml: string): {
     lastIndex = end;
   }
 
-  const tail = documentXml.slice(lastIndex);
-  if (tail) parts.push({ type: "chunk", xml: tail });
+  // 还原尾部 chunk 中的屏蔽块
+  const tailShielded = shieldedXml.slice(lastIndex);
+  if (tailShielded) {
+    parts.push({ type: "chunk", xml: restoreShields(tailShielded, shieldMap) });
+  }
 
   return { parts, paragraphs };
 }
@@ -95,11 +147,11 @@ export function splitDocumentXmlIntoParts(documentXml: string): {
  * 从 `<w:p>...</w:p>` 中提取纯文本。
  *
  * 设计原因：
- * - 检测/改写通常基于“可阅读文本”；
+ * - 检测/改写通常基于"可阅读文本"；
  * - OOXML 的 run 可能被拆成多段 `<w:t>`，需要按出现顺序拼接。
  *
  * 实现方式：
- * - 以“扫描 token”的方式按序匹配：`<w:t>`、`<w:tab/>`、`<w:br/>`、`<w:cr/>`；
+ * - 以"扫描 token"的方式按序匹配：`<w:t>`、`<w:tab/>`、`<w:br/>`、`<w:cr/>`；
  * - 对 `<w:t>` 进行 XML 实体反转义。
  */
 export function extractParagraphText(paragraphXml: string): string {
@@ -121,4 +173,3 @@ export function extractParagraphText(paragraphXml: string): string {
   // Word 段落末尾常有大量空白 run，保留对检测意义不大，这里做轻度 trim。
   return out.replace(/[\u00A0\s]+$/g, "");
 }
-

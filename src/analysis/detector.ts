@@ -363,24 +363,24 @@ export function detectAigcRisk(paragraphs: Array<Pick<DocxParagraph, "id" | "ind
           `认知标记${f.cognitiveMarkerCount}处`,
           `密度≈${f.cognitiveMarkerDensity.toFixed(1)}/千字（人类平均≈4.2/千字）`,
         ],
-        suggestion: "在论证过程中加入思维转折（「然而笔者发现」「这一发现与预期不同」）、研究者视角评论（「从实践经验来看」「在调研中注意到」），体现真实研究过程。",
+        suggestion: "在论证过程中加入思维转折（「出乎意料的是」「有趣的是」「尽管如此」）或研究者视角（「笔者认为」「在笔者看来」「严格来说」「退一步说」），体现真实思考过程。",
         score: 14,
       });
     }
 
-    // 句长分布熵过低（AI 文本句长均匀 → 熵低）
-    // 对 3+ 句的段落检测；人类写作熵值通常 > 2.5
-    if (f.sentenceCount >= 3 && f.sentenceLenEntropy < 2.2) {
+    // 句长均匀性（AI 文本句长趋于相近 → 方差低）
+    // 注意：句长「熵」在有支配性长句时反而偏低（熵 = -Σ(p×log₂p)，均匀分布熵最高），
+    // 因此改用方差来衡量均匀性——方差低才是 AI 特征，方差高说明有大幅长短混合（人类特征）。
+    // 这里故意留一个占位 check，避免重复逻辑，实际检测已由 lang_uniform_sentence 覆盖。
+    // （cog_low_entropy 信号已废弃，不再触发，保留 if-block 防止结构性问题）
+    if (false && f.sentenceCount >= 3 && f.sentenceLenEntropy < 2.2) {
       signals.push({
         signalId: "cog_low_entropy",
         category: "cognitiveFeatures",
-        title: "句长分布熵偏低（节奏过于机械）",
-        evidence: [
-          `句长熵≈${f.sentenceLenEntropy.toFixed(2)}（人类写作通常>2.5）`,
-          `共${f.sentenceCount}个句子`,
-        ],
-        suggestion: "刻意混合短句（<15字）和长句（>40字）：在连续长句后插入简短总结句，在短句后展开详细论述。",
-        score: 12,
+        title: "句长分布熵偏低（已废弃）",
+        evidence: [],
+        suggestion: "",
+        score: 0,
       });
     }
 
@@ -407,7 +407,7 @@ export function detectAigcRisk(paragraphs: Array<Pick<DocxParagraph, "id" | "ind
         evidence: [
           `${f.sentenceCount}个句子全部为陈述句，未见功能切换`,
         ],
-        suggestion: "在段落中加入转折句（「但需要注意的是」「这一结论也存在局限」）或追问句，打破单一陈述流。",
+        suggestion: "在段落中加入转折句（以「然而」「但是」「不过」开头的句子）或追问句，打破单一陈述流。",
         score: 10,
       });
     }
