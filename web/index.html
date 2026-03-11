@@ -242,9 +242,15 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .pkg-sep{font-size:11px;color:var(--g300);text-align:center;margin:8px 0;position:relative}
 .pkg-sep::before,.pkg-sep::after{content:"";position:absolute;top:50%;width:40%;height:1px;background:var(--g200)}
 .pkg-sep::before{left:0}.pkg-sep::after{right:0}
-.buy-steps{margin:4px 0 8px;padding:12px 14px;background:var(--g50);border-radius:10px;border:1px solid var(--g100)}
-.buy-step{display:flex;align-items:flex-start;gap:8px;padding:4px 0;font-size:13px;color:var(--g700)}
-.step-num{width:20px;height:20px;border-radius:50%;background:var(--pri);color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:1px}
+.pricing-intro{display:flex;align-items:flex-start;gap:8px;padding:10px 14px;background:#eef2ff;border:1px solid #c7d2fe;border-radius:8px;margin-bottom:14px;font-size:13px;color:#3730a3;line-height:1.55}
+.pricing-intro-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.pricing-estimate{padding:9px 14px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;margin-bottom:12px;font-size:13px;color:#166534;line-height:1.5}
+.buy-how{margin:4px 0 8px}
+.buy-how-title{font-size:12px;font-weight:600;color:var(--g500);text-transform:uppercase;letter-spacing:.05em;margin-bottom:6px}
+.buy-steps{padding:12px 14px;background:var(--g50);border-radius:10px;border:1px solid var(--g100)}
+.buy-step{display:flex;align-items:flex-start;gap:8px;padding:5px 0;font-size:13px;color:var(--g700);line-height:1.5}
+.step-num{width:20px;height:20px;border-radius:50%;background:var(--pri);color:white;font-size:11px;font-weight:700;display:flex;align-items:center;justify-content:center;flex-shrink:0;margin-top:2px}
+.xhs-tag{display:inline-flex;align-items:center;gap:3px;margin-left:4px;padding:1px 7px;background:#ff2442;color:white;border-radius:4px;font-size:11px;font-weight:600;vertical-align:middle}
 .qr-hint{display:flex;align-items:center;gap:12px;padding:12px;background:#fffbeb;border:1px solid #fde68a;border-radius:8px;margin:10px 0;font-size:12px;color:var(--g700)}
 .qr-hint-icon{font-size:22px;flex-shrink:0}
 .redeem-section{margin-top:16px;padding-top:16px;border-top:1px solid var(--g200)}
@@ -550,15 +556,25 @@ body.sidebar-open .action-bar{margin-right:400px}
     </div>
     <div class="modal-body" style="padding:20px">
 
+      <!-- 积分说明 intro -->
+      <div class="pricing-intro">
+        <span class="pricing-intro-icon">💡</span>
+        <span>积分用于 AI 自动改写，每改写约 <strong>200 字</strong>消耗 <strong>1 积分</strong>。检测不消耗积分，可免费使用。</span>
+      </div>
+
+      <!-- 动态估算（有文档时显示） -->
+      <div id="pricingEstimate" class="pricing-estimate" style="display:none"></div>
+
+      <!-- 套餐卡片 -->
       <div class="pricing-packages" id="pkgGrid">
         <div class="pkg-card" data-pkg="lite">
           <div class="pkg-name">体验包</div>
           <div class="pkg-price"><sup>¥</sup>9.9</div>
           <div class="pkg-points">100 积分</div>
-          <div class="pkg-desc">约 2 万字改写<br>适合单章节</div>
+          <div class="pkg-desc">约 2 万字改写<br>适合单章节试试</div>
         </div>
         <div class="pkg-card hot" data-pkg="base">
-          <div class="pkg-badge">最受欢迎</div>
+          <div class="pkg-badge">推荐</div>
           <div class="pkg-name">基础包</div>
           <div class="pkg-price"><sup>¥</sup>29.9</div>
           <div class="pkg-points">400 积分</div>
@@ -568,32 +584,43 @@ body.sidebar-open .action-bar{margin-right:400px}
           <div class="pkg-name">旗舰包</div>
           <div class="pkg-price"><sup>¥</sup>79.9</div>
           <div class="pkg-points">1200 积分</div>
-          <div class="pkg-desc">约 24 万字改写<br>多稿反复修改</div>
+          <div class="pkg-desc">约 24 万字改写<br>多稿反复修改无忧</div>
         </div>
       </div>
 
-      <div class="buy-steps">
-        <div class="buy-step">
-          <div class="step-num">1</div>
-          <div>在小红书上购买相应套餐，获取兑换码</div>
-        </div>
-        <div class="buy-step">
-          <div class="step-num">2</div>
-          <div>来这里输入兑换码，积分自动到账，立即可用</div>
+      <!-- 购买步骤 -->
+      <div class="buy-how">
+        <div class="buy-how-title">如何购买？</div>
+        <div class="buy-steps">
+          <div class="buy-step">
+            <div class="step-num">1</div>
+            <div>
+              <strong>小红书搜索「论文盾」</strong>，找到对应套餐下单
+              <span class="xhs-tag">📕 小红书</span>
+            </div>
+          </div>
+          <div class="buy-step">
+            <div class="step-num">2</div>
+            <div>付款后，店主会私信发给你一个 <strong>8 位兑换码</strong>（如：ABCD1234）</div>
+          </div>
+          <div class="buy-step">
+            <div class="step-num">3</div>
+            <div>在下方输入兑换码，积分<strong>立即到账</strong>，可直接开始改写</div>
+          </div>
         </div>
       </div>
 
+      <!-- 兑换码输入 -->
       <div class="redeem-section">
         <h4>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
-          输入兑换码
+          已有兑换码？在这里输入
         </h4>
-        <p>输入购买后收到的 8 位兑换码，积分即刻到账</p>
         <div class="redeem-input-row">
           <input class="redeem-input" id="redeemInput" placeholder="例：ABCD1234" maxlength="10" autocomplete="off" />
           <button class="btn btn-primary" id="redeemBtn">
             <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M20 12V22H4V12"/><path d="M22 7H2v5h20V7z"/><path d="M12 22V7"/><path d="M12 7H7.5a2.5 2.5 0 010-5C11 2 12 7 12 7z"/><path d="M12 7h4.5a2.5 2.5 0 000-5C13 2 12 7 12 7z"/></svg>
-            兑换
+            立即兑换
           </button>
         </div>
         <div id="redeemResult" style="margin-top:8px;font-size:13px;display:none"></div>
@@ -1272,6 +1299,36 @@ function openPricingModal(){
   // 清空上次兑换结果提示，避免残留信息误导用户
   redeemResult.style.display="none";
   redeemInput.value="";
+
+  // 动态估算：如已上传文档，计算高风险段落预计消耗积分，帮助用户选择套餐
+  const estimateEl=$("pricingEstimate");
+  if(estimateEl){
+    if(state.session){
+      const report=state.session.reportAfter||state.session.reportBefore;
+      const paragraphReports=(report&&report.paragraphReports)||[];
+      const rwCounts=state.session.paragraphRewriteCounts||{};
+      // 统计所有高风险段落（含已改写过的）
+      const highRisk=paragraphReports.filter(r=>r.riskScore>=35);
+      // 计算完整一次降重所需积分（不排除已改写段落，给用户看全量估算）
+      let totalPts=0;
+      for(const pr of highRisk){
+        const p=(state.session.paragraphs||[]).find(x=>x.id===pr.paragraphId);
+        const len=p?String(p.text||"").trim().length:300;
+        totalPts+=Math.max(1,Math.ceil((len||1)/200));
+      }
+      if(highRisk.length>0){
+        const alreadyRevised=Object.keys(state.session.revised||{}).length;
+        const hint=alreadyRevised>0?`（已改写 ${alreadyRevised} 段，剩余高风险段落约需上述积分）`:"";
+        estimateEl.innerHTML=`📊 <strong>你当前的论文</strong>：共 ${highRisk.length} 个高风险段落，完成一次完整自动降重约需 <strong>${totalPts} 积分</strong>${hint}。`;
+        estimateEl.style.display="block";
+      }else{
+        estimateEl.style.display="none";
+      }
+    }else{
+      estimateEl.style.display="none";
+    }
+  }
+
   pricingModal.classList.add("open");
 }
 topupBtn.addEventListener("click",openPricingModal);
