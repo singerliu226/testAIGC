@@ -490,10 +490,10 @@ body.sidebar-open .action-bar{margin-right:400px}
   <div class="modal">
     <div class="modal-header">隐私与安全 <button class="icon-btn" id="privacyClose">&times;</button></div>
     <div class="modal-body">
-      <p><strong>本地优先：</strong>你上传的 .docx 与会话状态默认保存在本机磁盘（<code style="background:var(--g100);padding:2px 6px;border-radius:4px;font-size:12px">data/sessions/</code>），便于重启恢复。</p>
-      <p><strong>按需上传：</strong>改写时只会把你选中的段落（以及前后少量上下文）发送到模型接口，不会自动上传整篇文档。</p>
-      <p><strong>日志脱敏：</strong>日志默认只记录会话 ID、段落 ID 与统计信息，不记录全文内容。</p>
-      <p style="color:var(--g400)">如需完全不落盘，可设置环境变量 <code style="background:var(--g100);padding:2px 6px;border-radius:4px;font-size:12px">SESSION_STORE=memory</code>。</p>
+      <p><strong>📄 你的论文不会泄露：</strong>上传的文件仅保存在服务器本地，不会分享给任何第三方，也不会被用于训练模型。</p>
+      <p><strong>✂️ 改写只发送必要内容：</strong>每次改写时，系统只把你选中的段落（以及少量上下文）发送给 AI，不会把整篇论文全部上传。</p>
+      <p><strong>🔒 内容不进日志：</strong>系统日志只记录操作时间、统计数字等基础信息，你的论文正文内容不会出现在任何日志里。</p>
+      <p><strong>💾 历史记录可恢复：</strong>上传和改写的进度会自动保存，刷新页面或下次打开仍可继续，不用担心工作丢失。</p>
     </div>
   </div>
 </div>
