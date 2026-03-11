@@ -45,6 +45,17 @@ export async function runAutoRewriteJob(params: {
   };
   const failures: Array<{ paragraphId: string; paragraphIndex?: number; code: string; message: string }> = [];
 
+  /**
+   * 跨任务的段落累计改写次数（由上次任务传承，本次成功改写后递增并在完成时写回）。
+   *
+   * 设计原因：
+   * - 防止同一顽固段落被无限次尝试，每次都消耗积分却无实质效果；
+   * - 超过阈值后系统自动跳过该段，并在前端预检弹窗中提示"建议手动处理"。
+   */
+  const rwCounts: Record<string, number> = { ...(session.paragraphRewriteCounts ?? {}) };
+  /** 单段最多累计改写次数，超出则跳过 */
+  const MAX_CUMULATIVE_REWRITES = 3;
+
   const now = Date.now();
   const overallBefore = detectAigcRisk(mergeParagraphs(paragraphs, updated)).overallRiskScore ?? 0;
   params.store.update(params.sessionId, {
@@ -117,8 +128,11 @@ export async function runAutoRewriteJob(params: {
        */
       const all = (curReport.paragraphReports ?? [])
         .filter((r) => r.riskScore >= params.body.minParagraphScore)
-        .sort((a, b) => (b.riskScore * b.text.length) - (a.riskScore * a.text.length))
-        .filter((r) => (perPidAttempts.get(r.paragraphId) ?? 0) < params.body.maxPerParagraph);
+        // 跳过本任务内已达 maxPerParagraph 次的段落（防止单轮反复尝试同一段）
+        .filter((r) => (perPidAttempts.get(r.paragraphId) ?? 0) < params.body.maxPerParagraph)
+        // 跳过跨任务累计已达 MAX_CUMULATIVE_REWRITES 次的顽固段落（继续尝试收益极低）
+        .filter((r) => (rwCounts[r.paragraphId] ?? 0) < MAX_CUMULATIVE_REWRITES)
+        .sort((a, b) => (b.riskScore * b.text.length) - (a.riskScore * a.text.length));
 
       const preferSet = new Set((params.body.preferParagraphIds ?? []).filter(Boolean));
       const preferred = preferSet.size ? all.filter((r) => preferSet.has(r.paragraphId)) : [];
@@ -214,6 +228,8 @@ export async function runAutoRewriteJob(params: {
             if (out.ok) {
               updated[p.id] = out.revisedText;
               rewriteResults[p.id] = out.rewriteResult;
+              // 成功改写后递增该段累计改写次数（写回 session 时一并持久化）
+              rwCounts[p.id] = (rwCounts[p.id] ?? 0) + 1;
               succeeded += 1;
             } else {
               failures.push({
@@ -258,7 +274,8 @@ export async function runAutoRewriteJob(params: {
 
       const remainingCandidates = (afterReport.paragraphReports ?? [])
         .filter((r) => r.riskScore >= params.body.minParagraphScore)
-        .filter((r) => (perPidAttempts.get(r.paragraphId) ?? 0) < params.body.maxPerParagraph).length;
+        .filter((r) => (perPidAttempts.get(r.paragraphId) ?? 0) < params.body.maxPerParagraph)
+        .filter((r) => (rwCounts[r.paragraphId] ?? 0) < MAX_CUMULATIVE_REWRITES).length;
 
       if (afterScore < bestScore) {
         noImproveRounds = 0;
@@ -287,6 +304,8 @@ export async function runAutoRewriteJob(params: {
       rewriteResults,
       reportAfter: finalReport,
       revision,
+      // 累计改写次数持久化，下次任务启动时可读取，跳过已多次尝试的顽固段落
+      paragraphRewriteCounts: rwCounts,
       revisedDocx: undefined,
       revisedDocxRevision: undefined,
       autoRewriteJob: {

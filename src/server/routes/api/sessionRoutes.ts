@@ -54,6 +54,8 @@ export function registerSessionRoutes(params: { router: Router; store: SessionSt
         reportAfter: session.reportAfter ?? null,
         revised: session.revised ?? {},
         rewriteResults: session.rewriteResults ?? {},
+        // 各段落跨任务累计改写次数，用于前端预检弹窗展示顽固段落数量
+        paragraphRewriteCounts: session.paragraphRewriteCounts ?? {},
         chatMessages: session.chatMessages ?? [],
         exportUrl: `/api/export/${encodeURIComponent(sessionId)}`,
       });
