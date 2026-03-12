@@ -156,6 +156,22 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .rewrite-progress-text{font-size:12px;color:var(--g500);white-space:nowrap;min-width:90px;text-align:right}
 .hint-note{margin-top:10px;font-size:12px;color:var(--g400);line-height:1.6}
 .hint-note strong{color:var(--g700)}
+/* ── 改写前评估面板 ── */
+.difficulty-panel{margin-top:10px;padding:12px 14px;background:#fafafa;border:1.5px solid var(--g200);border-radius:10px}
+.diff-header{display:flex;align-items:center;gap:8px;flex-wrap:wrap;margin-bottom:8px}
+.diff-badge{display:inline-flex;align-items:center;gap:4px;padding:2px 10px;border-radius:6px;font-size:12px;font-weight:600;border:1px solid transparent}
+.diff-badge-type{background:var(--g100);color:var(--g700);border-color:var(--g200)}
+.diff-badge-easy{background:var(--ok-bg);color:var(--ok);border-color:var(--ok-bd)}
+.diff-badge-medium{background:var(--warn-bg);color:var(--warn);border-color:var(--warn-bd)}
+.diff-badge-hard{background:var(--err-bg);color:var(--err);border-color:var(--err-bd)}
+.diff-rows{display:flex;flex-direction:column;gap:5px}
+.diff-row{display:flex;align-items:flex-start;gap:8px;font-size:13px;line-height:1.5}
+.diff-row-icon{flex-shrink:0;margin-top:1px}
+.diff-row-body{}
+.diff-row-title{font-weight:600;color:var(--g900)}
+.diff-row-sub{font-size:11.5px;color:var(--g400);margin-top:1px}
+.diff-expected{margin-top:8px;padding-top:8px;border-top:1px dashed var(--g200);font-size:12px;color:var(--g500)}
+.diff-expected strong{color:var(--g900)}
 .toast{position:fixed;top:72px;left:50%;transform:translateX(-50%);padding:10px 24px;border-radius:8px;font-size:13px;font-weight:500;z-index:200;box-shadow:0 4px 12px rgba(0,0,0,.15);pointer-events:none;opacity:0;transition:opacity .3s}
 .toast.show{opacity:1}
 .toast-ok{background:var(--ok);color:white}
@@ -481,6 +497,7 @@ body.sidebar-open .action-bar{margin-right:400px}
       <div class="rewrite-progress-bar"><div class="rewrite-progress-fill" id="rewriteProgressFill" style="width:0%"></div></div>
       <div class="rewrite-progress-text" id="rewriteProgressText">准备中…</div>
     </div>
+    <div class="difficulty-panel hidden" id="difficultyPanel"></div>
     <div class="hint-note">
       <strong>提示：</strong>AI 自动修改仅供参考，建议结合下方“建议”自行手动修改，以获得更佳结果与更高可控性。受论文风格和内容限制，<strong>单次自动降重可能无法完全达到目标</strong>，可多次点击继续改写以进一步降低 AI率。
     </div>
@@ -776,6 +793,95 @@ function estimatePoints(){
 }
 
 /**
+ * 分析检测报告，给出改写前的难度评估。
+ *
+ * 核心逻辑：
+ * 1. 将高风险段落（riskScore >= 35）按"是否数据/事实密集"分成两类：
+ *    - 可自动改写：信号以套话/模板/AI结构为主，且正文无密集数字锚点
+ *    - 建议手动修改：含 veri_* 系列信号，或正文有 2+ 个百分比/年份（guardrail 极易触发）
+ * 2. 根据两类的比例判断论文类型（数据实证/混合/论证综述）和改写难度
+ * 3. 估算自动改写可达到的 AI 率下限（假设可改段落降到 ~15% 风险）
+ */
+function calcPaperAssessment(){
+  if(!state.session)return null;
+  const report=state.session.reportAfter||state.session.reportBefore;
+  if(!report||!report.paragraphReports||!report.paragraphReports.length)return null;
+
+  const all=report.paragraphReports;
+  const highRisk=all.filter(p=>p.riskScore>=35);
+  if(!highRisk.length)return null;
+
+  // veri_* 系列信号：事实声明类，guardrail 最易触发
+  const HARD_SIGNAL_IDS=new Set(['veri_strong_claim_no_cite','veri_cite_imbalance','veri_claim_no_cite_weak']);
+
+  const autoParas=[],manualParas=[];
+
+  for(const pr of highRisk){
+    const text=pr.text||'';
+    const hardSignalCount=(pr.signals||[]).filter(s=>HARD_SIGNAL_IDS.has(s.signalId)).length;
+    // 数字密集判定：2+个百分比，或 2+个年份，或有 veri_* 信号
+    const pctMatches=(text.match(/\d+\.?\d*[%‰]/g)||[]).length;
+    const yearMatches=(text.match(/\d{4}年/g)||[]).length;
+    const isDataHeavy=hardSignalCount>=1||pctMatches>=2||yearMatches>=2;
+    if(isDataHeavy)manualParas.push(pr);
+    else autoParas.push(pr);
+  }
+
+  // 论文类型与难度
+  const totalHigh=highRisk.length;
+  const manualRatio=totalHigh>0?manualParas.length/totalHigh:0;
+  let paperType,paperTypeDesc,difficulty,diffClass,tipsAuto,tipsManual;
+
+  if(manualRatio>=0.55){
+    paperType='数据实证型';paperTypeDesc='大量统计数据与实证结果';
+    difficulty='较难';diffClass='diff-badge-hard';
+    tipsAuto='套话与模板类段落，AI改写成功率高';
+    tipsManual='含具体数字/百分比/年份，AI改写易被安全拦截，手动改写效果最佳';
+  }else if(manualRatio>=0.3){
+    paperType='混合型';paperTypeDesc='论证分析与数据引用并重';
+    difficulty='中等';diffClass='diff-badge-medium';
+    tipsAuto='套话与模板类段落，AI改写成功率高';
+    tipsManual='含统计数据或具体引用，建议参考下方「建议」手动调整';
+  }else{
+    paperType='论证综述型';paperTypeDesc='以文献引用与观点论证为主';
+    difficulty='较易';diffClass='diff-badge-easy';
+    tipsAuto='套话与模板类段落，AI改写成功率高，1-2次即可大幅降低';
+    tipsManual='含部分数据，可先尝试自动，拦截后再手动调整';
+  }
+
+  // 预估自动改写可达的 AI 率：可改段落视为降到 15% 风险，手动段落维持原分
+  const totalChars=all.reduce((s,p)=>s+(p.text||'').length,0);
+  let aiCharEstimate=0;
+  const manualIds=new Set(manualParas.map(p=>p.paragraphId));
+  for(const pr of all){
+    if(pr.riskScore<35)continue;
+    const len=(pr.text||'').length;
+    aiCharEstimate+=len*(manualIds.has(pr.paragraphId)?pr.riskScore/100:0.15);
+  }
+  const expectedAutoRate=totalChars>0?Math.max(0,Math.round((aiCharEstimate/totalChars)*100)):0;
+
+  // 预估需要点击几次（每次约处理 35 个 auto 段）
+  const estimatedSessions=Math.max(1,Math.ceil(autoParas.length/35));
+
+  // 手动段落的位置提示（最多展示 8 个序号）
+  const manualPositions=manualParas
+    .map(p=>{
+      const idx=all.findIndex(x=>x.paragraphId===p.paragraphId);
+      return idx>=0?`第${idx+1}段`:null;
+    })
+    .filter(Boolean)
+    .slice(0,8);
+
+  return{
+    paperType,paperTypeDesc,difficulty,diffClass,
+    autoCount:autoParas.length,manualCount:manualParas.length,
+    tipsAuto,tipsManual,manualPositions,estimatedSessions,
+    currentScore:report.overallRiskScore||0,
+    expectedAutoRate
+  };
+}
+
+/**
  * 计算自动降重的候选段落及预估积分。
  * 设计原因：为预检弹窗提供准确的信息，而非依赖手动选择的 #estimate。
  */
@@ -1037,6 +1143,59 @@ function render(){
     }
   }
   updateSelectionUI();
+  renderDifficultyPanel();
+}
+
+/**
+ * 渲染改写前难度评估面板。
+ *
+ * 设计原因：
+ * - 在用户点击"一键自动降重"之前，基于检测结果给出明确的预期管理信息
+ * - 将高风险段落分为"可自动改写"和"建议手动修改"两类，让用户对成本和效果有准确预期
+ * - 避免用户盲目多次点击消耗积分后仍对结果不满意
+ */
+function renderDifficultyPanel(){
+  const panel=document.getElementById('difficultyPanel');
+  if(!panel)return;
+  const a=calcPaperAssessment();
+  if(!a){panel.classList.add('hidden');return;}
+
+  const sessionsDes=a.estimatedSessions===1?'1次点击即可完成':`预计需要 ${a.estimatedSessions} 次点击`;
+  const manualNote=a.manualCount>0&&a.manualPositions.length>0
+    ?`<div class="diff-row-sub">→ 示例：${a.manualPositions.join('、')}${a.manualPositions.length>=8?'等':''}，可对照下方「建议」栏手动调整</div>`:'';
+  const rateNote=a.expectedAutoRate<=15
+    ?`<strong>✅ 预计自动降重后约可降至 ~${a.expectedAutoRate}%，可达目标！</strong>`
+    :a.manualCount>0
+      ?`自动改写约可降至 <strong>~${a.expectedAutoRate}%</strong>；要达到 15% 以下，还需配合手动修改上述 ${a.manualCount} 段`
+      :`自动改写约可降至 <strong>~${a.expectedAutoRate}%</strong>`;
+
+  panel.innerHTML=`
+    <div class="diff-header">
+      <span class="diff-badge diff-badge-type">📄 ${a.paperType}</span>
+      <span class="diff-badge ${a.diffClass}">改写难度：${a.difficulty}</span>
+      <span style="font-size:12px;color:var(--g400)">${a.paperTypeDesc}</span>
+    </div>
+    <div class="diff-rows">
+      ${a.autoCount>0?`<div class="diff-row">
+        <span class="diff-row-icon">✅</span>
+        <div class="diff-row-body">
+          <span class="diff-row-title">可自动改写 ${a.autoCount} 段</span>
+          <span style="font-size:12px;color:var(--g500)">（${a.tipsAuto}）</span>
+          <div class="diff-row-sub">${sessionsDes}，每次约消耗 ${Math.ceil(a.autoCount*0.7)} 积分</div>
+        </div>
+      </div>`:''}
+      ${a.manualCount>0?`<div class="diff-row">
+        <span class="diff-row-icon">✋</span>
+        <div class="diff-row-body">
+          <span class="diff-row-title">建议手动修改 ${a.manualCount} 段</span>
+          <span style="font-size:12px;color:var(--g500)">（${a.tipsManual}）</span>
+          ${manualNote}
+        </div>
+      </div>`:''}
+    </div>
+    <div class="diff-expected">📊 预期效果：${rateNote}</div>`;
+
+  panel.classList.remove('hidden');
 }
 
 // ── file select & drag-drop: auto-trigger upload ──
