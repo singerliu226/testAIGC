@@ -1364,7 +1364,7 @@ redeemBtn.addEventListener("click",async()=>{
     if(json.ok){
       redeemResult.style.display="block";
       redeemResult.style.color="var(--ok)";
-      redeemResult.textContent=`兑换成功！到账 ${json.points} 积分（${json.packageName}），当前余额 ${json.balance} 积分`;
+      redeemResult.innerHTML=`<div>✅ 兑换成功！到账 <strong>${json.points} 积分</strong>（${json.packageName}），当前余额 <strong>${json.balance} 积分</strong></div><div style="margin-top:6px;padding:7px 10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:12px;color:#166534;line-height:1.6">💡 <strong>积分与当前浏览器绑定</strong>，请勿在无痕模式下使用。换设备或清除浏览器数据后积分将无法找回，建议在常用设备的普通浏览器中使用本工具。</div>`;
       balanceEl.textContent=String(json.balance);
       redeemInput.value="";
       showToast(`积分到账！+${json.points} 积分，余额 ${json.balance}`,"ok",4000);
