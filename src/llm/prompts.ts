@@ -77,6 +77,41 @@ export function buildRewriteMessages(
   const minChangeRatio = typeof opts?.minChangeRatio === "number" ? opts.minChangeRatio : 0.25;
   const factLock = Boolean(opts?.factLock);
 
+  /**
+   * 检测段落是否主要为英文。
+   * 设计原因：中英文混合论文（如含双语摘要）中，若对英文段落使用中文认知标记词，
+   * LLM 会将中文直接插入英文输出，造成语言混乱。
+   * 实现：统计非空白字符中 ASCII 字母占比，>55% 视为英文段落。
+   */
+  const isEnglish = (() => {
+    const text = input.paragraphText ?? "";
+    const nonSpace = text.replace(/\s/g, "");
+    if (!nonSpace) return false;
+    const asciiLetters = (nonSpace.match(/[A-Za-z]/g) ?? []).length;
+    return asciiLetters / nonSpace.length > 0.55;
+  })();
+
+  /** 认知标记词：根据原文语言选择对应语言版本，防止英文段落中混入中文 */
+  const cognitiveMarkers = isEnglish
+    ? [
+        "══ Cognitive Marker Words to Inject (use 1-2, reduces AI detection score) ══",
+        "The following phrases signal human writing patterns to the detection system:",
+        "【Surprise/Transition】Interestingly, Surprisingly, Unexpectedly, It is worth reflecting on",
+        "【Researcher Perspective】In my view, I would argue that, Strictly speaking, To be candid,",
+        "【Limitation Acknowledgment】Admittedly, That said, Notwithstanding, Subject to,",
+        "【Contrastive Structure】However, Nevertheless, Yet, Conversely (to introduce contrast)",
+        "⚠️ Use the researcher-perspective phrases for opinion only. Do NOT invent new fieldwork or interviews not present in the original.",
+      ]
+    : [
+        "══ 必须注入的认知标记词（至少用 1-2 个，显著降低 cog_low_density 信号） ══",
+        "以下词汇是我们 AIGC 检测系统判定为「人类写作痕迹」的关键标记，加入它们会直接降低检测风险分：",
+        "【思维转折类】出乎意料的是、令人意外的是、有趣的是、值得反思的是、耐人寻味的是",
+        "【研究者视角类】笔者认为、笔者注意到、在笔者看来、严格来说、退一步说、坦率地说",
+        "【局限承认类】需要承认的是、当然也存在、尽管如此、不过这一结论、受限于、囿于",
+        "【转折结构类】以「然而」「但是」「不过」「可是」开头的句子（用于增加段落内部结构切换）",
+        "⚠️ 注意：「笔者认为/注意到/看来」可以使用，但严禁「笔者实地/调研/走访/访谈」（不得新增未有的研究活动）",
+      ];
+
   return [
     {
       role: "system",
@@ -92,6 +127,7 @@ export function buildRewriteMessages(
         "5) 改写后文本长度应与原文保持在 ±20% 以内，不要无谓扩写。",
         "6) 严禁新增【第一人称亲历宣称】：不得新增「笔者实地」「笔者调研」「笔者走访」「实地调研」「实地走访」「本人调研」等组合——除非原文已明确包含这些表达。「笔者认为/笔者指出」等意见表达允许，但「笔者+调研活动」严格禁止。",
         "7) 严禁新增具体【机构/公司名称】：若原文没有该机构，不得在改写中引入。需要泛指时只用「某公司」「相关机构」「部分平台」等非定向表达。",
+        "8) 【语言一致性（绝对禁止违反）】：必须严格保持原文语言。输入为英文则全部英文输出，输入为中文则全部中文输出。严禁在改写中混入任何不同语言的词汇、短语或句子，即使系统提示中有中文示例，也绝对不得将其用于英文段落的改写输出中。",
         "",
         ...(factLock
           ? [
@@ -125,13 +161,7 @@ export function buildRewriteMessages(
               "",
             ]
           : []),
-        "══ 必须注入的认知标记词（至少用 1-2 个，显著降低 cog_low_density 信号） ══",
-        "以下词汇是我们 AIGC 检测系统判定为「人类写作痕迹」的关键标记，加入它们会直接降低检测风险分：",
-        "【思维转折类】出乎意料的是、令人意外的是、有趣的是、值得反思的是、耐人寻味的是",
-        "【研究者视角类】笔者认为、笔者注意到、在笔者看来、严格来说、退一步说、坦率地说",
-        "【局限承认类】需要承认的是、当然也存在、尽管如此、不过这一结论、受限于、囿于",
-        "【转折结构类】以「然而」「但是」「不过」「可是」开头的句子（用于增加段落内部结构切换）",
-        "⚠️ 注意：「笔者认为/注意到/看来」可以使用，但严禁「笔者实地/调研/走访/访谈」（不得新增未有的研究活动）",
+        ...cognitiveMarkers,
         "",
         "══ 必须消除的 6 种 AI 特征 ══",
         "A. 模板连接词堆叠：完全删除「首先/其次/再次/最后」「此外/同时/与此同时/另外」等段落开头的模板过渡词，用因果关系和指代自然衔接。这类词出现越多扣分越高，务必清除。",
