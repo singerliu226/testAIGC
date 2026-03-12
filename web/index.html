@@ -191,6 +191,13 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .rw-confirm-danger{display:flex;align-items:flex-start;gap:8px;padding:10px 14px;background:#fff1f2;border:1px solid #fda4af;border-radius:8px;margin-bottom:8px;font-size:13px;color:#9f1239;line-height:1.5}
 .rw-confirm-actions{display:flex;gap:10px;justify-content:flex-end;margin-top:16px}
 .rw-confirm-icon{font-size:16px;flex-shrink:0;margin-top:1px}
+.rw-fail-summary{font-size:14px;font-weight:600;color:var(--g900);margin-bottom:10px}
+.rw-fail-reason{padding:10px 14px;background:#fffbeb;border:1px solid #fcd34d;border-radius:8px;margin-bottom:12px;font-size:13px;color:#92400e;line-height:1.6}
+.rw-fail-samples{margin-bottom:12px}
+.rw-fail-samples-title{font-size:12px;font-weight:600;color:var(--g500);margin-bottom:6px}
+.rw-fail-sample{display:flex;gap:8px;padding:6px 10px;background:var(--g50);border-radius:6px;margin-bottom:4px;font-size:12px;color:var(--g700);line-height:1.5}
+.rw-fail-sample-idx{font-weight:700;color:var(--pri);flex-shrink:0}
+.rw-fail-risk-note{padding:10px 14px;background:#fff1f2;border:1px solid #fda4af;border-radius:8px;font-size:12px;color:#9f1239;line-height:1.6}
 .preview-toolbar{padding:12px 20px;border-bottom:1px solid var(--g100);display:flex;align-items:center;justify-content:space-between;gap:12px;flex-shrink:0;background:var(--g50)}
 .preview-toolbar .stats{font-size:12px;color:var(--g500)}
 .preview-toolbar .stats strong{color:var(--g900)}
@@ -529,6 +536,23 @@ body.sidebar-open .action-bar{margin-right:400px}
   </div>
 </div>
 
+<!-- ══════ REWRITE FAILURE CONTINUE MODAL ══════ -->
+<div class="modal-overlay" id="rwFailModal">
+  <div class="modal" style="max-width:480px">
+    <div class="modal-header">
+      <span>改写完成（部分段落未能处理）</span>
+      <button class="icon-btn" id="rwFailClose">&times;</button>
+    </div>
+    <div class="modal-body">
+      <div id="rwFailContent"></div>
+      <div class="rw-confirm-actions">
+        <button class="btn btn-outline" id="rwFailManual">我来手动修改</button>
+        <button class="btn btn-primary" id="rwFailRisk">风险模式继续尝试</button>
+      </div>
+    </div>
+  </div>
+</div>
+
 <!-- ══════ REWRITE PRE-FLIGHT CONFIRM MODAL ══════ -->
 <div class="modal-overlay" id="rwConfirmModal">
   <div class="modal" style="max-width:480px">
@@ -657,6 +681,7 @@ body.sidebar-open .action-bar{margin-right:400px}
 const $ = (id) => document.getElementById(id);
 const out=$("out"),uploadBtn=$("upload"),rewriteToTargetBtn=$("rewriteToTarget"),cancelBtn=$("cancel"),fileInput=$("file"),exportLink=$("export"),exportTop=$("exportTop"),balanceEl=$("balance"),estimateEl=$("estimate"),estimateWrap=$("estimateWrap"),topupBtn=$("topup"),recheckBtn=$("recheck"),historyBtn=$("history"),privacyBtn=$("privacy"),historyModal=$("historyModal"),historyClose=$("historyClose"),historyBody=$("historyBody"),privacyModal=$("privacyModal"),privacyClose=$("privacyClose"),overviewCard=$("overviewCard"),reportCard=$("reportCard"),tbody=$("tbody"),minScore=$("minScore"),limitationsEl=$("limitations"),selectShownBtn=$("selectShown"),clearSelBtn=$("clearSel"),actionBar=$("actionBar"),selCountEl=$("selCount"),deltaInfo=$("deltaInfo"),dropZone=$("dropZone"),uploadProgress=$("uploadProgress"),uploadProgressBar=$("uploadProgressBar");
 const rwConfirmModal=$("rwConfirmModal"),rwConfirmStats=$("rwConfirmStats"),rwConfirmNotices=$("rwConfirmNotices"),rwConfirmOkBtn=$("rwConfirmOk"),rwConfirmCancelBtn=$("rwConfirmCancel"),rwConfirmCloseBtn=$("rwConfirmClose");
+const rwFailModal=$("rwFailModal"),rwFailContent=$("rwFailContent"),rwFailManualBtn=$("rwFailManual"),rwFailRiskBtn=$("rwFailRisk"),rwFailCloseBtn=$("rwFailClose");
 const verdictIcon=$("verdictIcon"),verdictTitle=$("verdictTitle"),verdictDesc=$("verdictDesc"),verdictBarFill=$("verdictBarFill"),verdictBarLabel=$("verdictBarLabel"),verdictFilename=$("verdictFilename"),emptyState=$("emptyState");
 const tabFilter=$("tabFilter"),countAll=$("countAll"),countMedium=$("countMedium"),countHigh=$("countHigh");
 const chatSidebar=$("chatSidebar"),chatCloseBtn=$("chatClose"),chatParaLabel=$("chatParaLabel"),chatParaPreview=$("chatParaPreview"),chatSuggestionsEl=$("chatSuggestions"),chatMessagesEl=$("chatMessages"),chatInput=$("chatInput"),chatSendBtn=$("chatSend");
@@ -1197,17 +1222,8 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
         const afterScore=sess.reportAfter?.overallRiskScore;
         const fails=(job.failures||[]);
         if(fails.length){
-          const sample=fails.slice(0,3).map(x=>`第 ${Number(x.paragraphIndex||0)+1} 段：${x.message||x.code}`).join("\\n");
           showToast(`已完成可改部分，但有 ${fails.length} 段被拦截/失败（已跳过）`,"warn",8000);
-          // 给用户一个“可操作”的清单，而不只是报错
-          log({
-            message:"自动降分已完成（部分段落被拦截/失败）",
-            tip:"我们已经把可以自动修改的部分处理完毕。以下段落建议你结合“建议”手动修改；若你愿意，也可以继续让我们尝试，但需要承担事实可能被改动/编造的风险，并逐段核对数字、日期、地点、研究结论等。",
-            failures:fails
-          });
-          const wantContinue=confirm(
-            `我们已经把能自动修改的部分处理完毕，但仍有 ${fails.length} 段无法自动改写（主要原因：为避免编造事实而被拦截）。\\n\\n你可以选择：\\n- 自行根据“建议”手动修改（更稳妥）\\n- 继续让我们尝试（可能出现编造/改动事实的风险，需要你逐段核对数字、日期、地点、研究结论等）\\n\\n是否继续尝试（风险模式）？\\n\\n示例失败原因：\\n${sample}`
-          );
+          const wantContinue=await openRewriteFailModal(fails.length,fails);
           if(wantContinue){
             // 继续尝试：聚焦上次失败段落，且开启风险模式
             queue.running=true;
@@ -1291,6 +1307,55 @@ const pricingModal=$("pricingModal"),pricingClose=$("pricingClose"),redeemInput=
  * 每次打开弹窗都重置套餐高亮为「基础包 ¥29.9」（默认推荐套餐），
  * 避免用户上次误点其他套餐后再次打开仍看到错误高亮，造成"我买了29.9但显示79.9"的困惑。
  */
+/**
+ * 改写完成但有部分段落被拦截时，弹出结构化提示弹窗。
+ * 返回 Promise<boolean>：true=用户选择风险模式继续，false=手动处理/关闭。
+ * 设计原因：替换原生 confirm()，消除 \n 字符直接显示的问题，并将选项与失败原因结构化展示。
+ */
+function openRewriteFailModal(failCount, fails){
+  return new Promise(resolve=>{
+    const samples=fails.slice(0,3);
+    // 生成失败样例 HTML
+    const samplesHtml=samples.length?`
+      <div class="rw-fail-samples">
+        <div class="rw-fail-samples-title">失败段落示例（共 ${failCount} 段）：</div>
+        ${samples.map(x=>{
+          // 简化错误信息，去掉技术前缀，只保留关键描述
+          const msg=(x.message||x.code||"")
+            .replace(/该段改写被拦截（[^）]*）：/g,"")
+            .replace(/new_numbers:/g,"新增数字：")
+            .replace(/new_dates:/g,"新增日期：")
+            .replace(/new_places:/g,"新增地点：")
+            .replace(/new_orgs:/g,"新增机构：")
+            .replace(/new_research_claims:/g,"新增研究结论：");
+          return `<div class="rw-fail-sample"><span class="rw-fail-sample-idx">第 ${Number(x.paragraphIndex||0)+1} 段</span><span>${esc(msg)}</span></div>`;
+        }).join("")}
+      </div>`:"";
+
+    rwFailContent.innerHTML=`
+      <div class="rw-fail-summary">✅ 可自动处理的部分已完成，有 <strong>${failCount} 个段落</strong>无法自动改写</div>
+      <div class="rw-fail-reason">
+        <strong>主要原因：</strong>为防止 AI 编造事实（如引入新的数字、日期、地名、机构名等），系统主动拦截了这些段落。这是保护机制，不是 Bug。
+      </div>
+      ${samplesHtml}
+      <div class="rw-fail-risk-note">
+        <strong>⚠️ 风险模式说明：</strong>继续尝试时会放宽限制，但可能出现数字、日期、地点、研究结论被改动或编造的风险。<br>
+        如选择继续，<strong>务必逐段核对上述内容是否准确</strong>。建议优先手动修改这些段落。
+      </div>`;
+
+    rwFailModal.classList.add("open");
+
+    const close=(result)=>{
+      rwFailModal.classList.remove("open");
+      resolve(result);
+    };
+    rwFailRiskBtn.addEventListener("click",()=>close(true),{once:true});
+    rwFailManualBtn.addEventListener("click",()=>close(false),{once:true});
+    rwFailCloseBtn.addEventListener("click",()=>close(false),{once:true});
+    rwFailModal.addEventListener("click",e=>{if(e.target===rwFailModal)close(false);},{once:true});
+  });
+}
+
 function openPricingModal(){
   // 重置套餐卡片高亮到默认推荐套餐（基础包 ¥29.9）
   $("pkgGrid").querySelectorAll(".pkg-card").forEach(c=>c.classList.remove("hot"));
