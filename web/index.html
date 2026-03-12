@@ -1169,7 +1169,7 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
     const startRes=await fetch(`/api/rewrite-to-target/${encodeURIComponent(state.sessionId)}/start`,{
       method:"POST",
       headers:getHeaders(),
-      body:JSON.stringify({targetScore:15,maxRounds:6,perRound:8,maxTotal:30,minParagraphScore:35,maxPerParagraph:2,stopNoImproveRounds:2,allowFactRisk:false})
+      body:JSON.stringify({targetScore:15,maxRounds:10,perRound:10,maxTotal:60,minParagraphScore:35,maxPerParagraph:3,stopNoImproveRounds:3,allowFactRisk:false})
     });
     const startJson=await startRes.json();
     log(startJson);
@@ -1233,7 +1233,7 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
             const s2=await fetch(`/api/rewrite-to-target/${encodeURIComponent(state.sessionId)}/start`,{
               method:"POST",
               headers:getHeaders(),
-              body:JSON.stringify({targetScore:15,maxRounds:6,perRound:8,maxTotal:30,minParagraphScore:35,maxPerParagraph:2,stopNoImproveRounds:2,allowFactRisk:true,preferParagraphIds:preferIds})
+              body:JSON.stringify({targetScore:15,maxRounds:10,perRound:10,maxTotal:60,minParagraphScore:35,maxPerParagraph:3,stopNoImproveRounds:3,allowFactRisk:true,preferParagraphIds:preferIds})
             });
             const j2=await s2.json();
             if(j2.ok&&j2.jobId){
@@ -1250,7 +1250,16 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
 
         if(typeof beforeScore==="number"&&typeof afterScore==="number"){
           const d=Math.round(afterScore-beforeScore);
-          showToast(`自动降分完成：${Math.round(beforeScore)}% → ${Math.round(afterScore)}%（${d<0?"降低":"变化"} ${Math.abs(d)}%）`,"ok",6000);
+          // 计算还有多少高风险段落未处理，帮助用户判断是否继续
+          const remainHigh=(sess.reportAfter?.paragraphReports||[]).filter(r=>r.riskScore>=35).length;
+          const rwCounts=sess.paragraphRewriteCounts||{};
+          const remainUnlocked=remainHigh-Object.values(rwCounts).filter(v=>v>=3).length;
+          let hint="";
+          if(afterScore<=15){hint="已达目标，可直接下载！";}
+          else if(remainUnlocked>0){hint=`仍有 ${remainUnlocked} 个高风险段落可继续改写，建议再次点击继续降低。`;}
+          else if(remainHigh>0){hint=`剩余 ${remainHigh} 个高风险段落已达改写上限，建议结合"建议"栏手动修改。`;}
+          const dText=d<0?`降低 ${Math.abs(d)}%`:(d===0?"无变化":`上升 ${d}%`);
+          showToast(`本次降重：${Math.round(beforeScore)}% → ${Math.round(afterScore)}%（${dText}）${hint?"  "+hint:""}`,d<=0?"ok":"warn",8000);
         }else{
           showToast("自动降分完成","ok",4000);
         }
