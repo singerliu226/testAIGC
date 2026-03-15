@@ -103,6 +103,46 @@ export class DiskSessionStore implements SessionStore {
     return items.slice(0, limit);
   }
 
+  /**
+   * 管理员专用：扫描所有 session 目录，返回完整摘要（含 autoRewriteJob）。
+   *
+   * 设计原因：
+   * - 只读 state.json，不加载 original.docx / revised.docx Buffer，避免内存压力；
+   * - state.json 已包含 autoRewriteJob 字段（persist() 仅排除 Buffer 字段）；
+   * - sinceMs 过滤减少不必要的磁盘读取（活跃看板只关心近期会话）。
+   */
+  listAllForAdmin(opts?: { sinceMs?: number }): import("./sessionStore.js").SessionSummary[] {
+    const since = opts?.sinceMs ?? 0;
+    const dirs = safeReadDir(this.root)
+      .filter((d) => d.isDirectory())
+      .map((d) => d.name);
+    const items: import("./sessionStore.js").SessionSummary[] = [];
+    for (const sid of dirs) {
+      const statePath = path.join(this.root, sid, "state.json");
+      if (!fs.existsSync(statePath)) continue;
+      try {
+        const raw = fs.readFileSync(statePath, "utf-8");
+        const s = JSON.parse(raw) as SessionRecord;
+        if (s.createdAt < since) continue;
+        items.push({
+          sessionId: s.sessionId,
+          accountId: s.accountId,
+          createdAt: s.createdAt,
+          filename: s.filename,
+          revision: s.revision ?? 0,
+          hasRevised: Boolean(s.revised && Object.keys(s.revised).length),
+          overallBefore: pickOverall(s.reportBefore),
+          overallAfter: pickOverall(s.reportAfter),
+          autoRewriteJob: s.autoRewriteJob,
+        });
+      } catch {
+        // ignore broken items
+      }
+    }
+    items.sort((a, b) => b.createdAt - a.createdAt);
+    return items;
+  }
+
   private sessionDir(sessionId: string): string {
     return path.join(this.root, sessionId);
   }

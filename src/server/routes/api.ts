@@ -32,7 +32,7 @@ export function createApiRouter(params: { logger: AppLogger; store: SessionStore
   registerRewriteRoutes({ router, logger: params.logger, store: params.store });
   registerExportRoutes({ router, store: params.store });
   registerChatRoutes({ router, logger: params.logger, store: params.store });
-  registerAdminRoutes({ router });
+  registerAdminRoutes({ router, store: params.store });
 
   return router;
 }

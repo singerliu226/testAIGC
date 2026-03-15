@@ -181,6 +181,12 @@ export type SessionIndexItem = {
   overallAfter?: { score: number; level: string } | null;
 };
 
+/** 管理员活跃看板用的轻量会话摘要（不含 Buffer 字段） */
+export type SessionSummary = SessionIndexItem & {
+  accountId: string;
+  autoRewriteJob?: SessionRecord["autoRewriteJob"];
+};
+
 export type SessionStore = {
   create(params: { filename: string; originalDocx: Buffer; accountId: string }): SessionRecord;
   get(sessionId: string): SessionRecord | undefined;
@@ -191,6 +197,16 @@ export type SessionStore = {
    * @param limit 最多返回条数，默认 30
    */
   list(accountId: string, limit?: number): SessionIndexItem[];
+  /**
+   * 管理员专用：列出所有账号的会话摘要（按创建时间倒序，无 accountId 过滤）。
+   *
+   * 设计原因：
+   * - 普通 list() 仅返回指定账号的会话，无法用于跨账号的活跃看板统计；
+   * - 此方法仅供 admin 路由调用，不对外暴露给普通用户接口。
+   * - Disk 实现只读 state.json，不加载 docx Buffer，避免内存压力。
+   * @param opts.sinceMs 只返回 createdAt >= sinceMs 的会话（用于 24h 统计）
+   */
+  listAllForAdmin(opts?: { sinceMs?: number }): SessionSummary[];
 };
 
 export class InMemorySessionStore {
@@ -243,6 +259,28 @@ export class InMemorySessionStore {
     }
     items.sort((a, b) => b.createdAt - a.createdAt);
     return items.slice(0, limit);
+  }
+
+  /** 管理员专用：返回所有账号的会话摘要，含 autoRewriteJob 状态。 */
+  listAllForAdmin(opts?: { sinceMs?: number }): SessionSummary[] {
+    const since = opts?.sinceMs ?? 0;
+    const items: SessionSummary[] = [];
+    for (const s of this.sessions.values()) {
+      if (s.createdAt < since) continue;
+      items.push({
+        sessionId: s.sessionId,
+        accountId: s.accountId,
+        createdAt: s.createdAt,
+        filename: s.filename,
+        revision: s.revision ?? 0,
+        hasRevised: Boolean(s.revised && Object.keys(s.revised).length),
+        overallBefore: pickOverall(s.reportBefore),
+        overallAfter: pickOverall(s.reportAfter),
+        autoRewriteJob: s.autoRewriteJob,
+      });
+    }
+    items.sort((a, b) => b.createdAt - a.createdAt);
+    return items;
   }
 }
 

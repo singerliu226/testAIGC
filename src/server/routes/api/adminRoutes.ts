@@ -13,8 +13,9 @@ import {
 } from "../../../billing/index.js";
 import { adminActionLimiter, adminLoginLimiter } from "../../rateLimit.js";
 import { buildUsageReport } from "../../../billing/usageReport.js";
+import type { SessionStore } from "../../sessionStore.js";
 
-export function registerAdminRoutes(params: { router: Router }) {
+export function registerAdminRoutes(params: { router: Router; store: SessionStore }) {
   const router = params.router;
 
   // ══════════════════════════════════════════════════════
@@ -190,5 +191,76 @@ export function registerAdminRoutes(params: { router: Router }) {
 
   // 预留：管理员可直接设置默认赠送积分（当前不开放接口，避免误操作）
   void getDefaultFreePoints;
+
+  /**
+   * 管理员活跃看板：实时返回正在运行的改写任务、上传统计和系统内存。
+   *
+   * 设计原因：
+   * - 单节点服务瓶颈是 Dashscope API 并发（每 job 5 并发），管理员需要感知当前负载；
+   * - 扫描所有 session 只读 state.json，不加载 docx Buffer，内存安全；
+   * - 前端每 10s 轮询，无需 WebSocket。
+   */
+  router.get(
+    "/admin/activity",
+    adminActionLimiter,
+    asyncHandler(async (req, res) => {
+      if (!isAdminRequest(req.header("x-admin-secret"))) {
+        throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
+      }
+
+      const now = Date.now();
+      const since24h = now - 24 * 60 * 60 * 1000;
+      const since1h = now - 60 * 60 * 1000;
+
+      // 扫描所有 session（24h 内）
+      const allSessions = params.store.listAllForAdmin({ sinceMs: since24h });
+
+      // 正在运行的 job（不受 24h 限制，需再全量扫描）
+      const allForJobs = params.store.listAllForAdmin();
+      const runningJobs = allForJobs
+        .filter((s) => s.autoRewriteJob?.status === "running")
+        .map((s) => ({
+          sessionId: s.sessionId,
+          accountIdShort: s.accountId.slice(0, 8) + "…",
+          filename: s.filename,
+          jobProgress: s.autoRewriteJob?.progress ?? null,
+          startedAt: s.autoRewriteJob?.createdAt ?? s.createdAt,
+          elapsedMs: now - (s.autoRewriteJob?.createdAt ?? s.createdAt),
+        }));
+
+      const uploadsLast1h = allSessions.filter((s) => s.createdAt >= since1h).length;
+      const uploadsLast24h = allSessions.length;
+
+      // Node.js 进程内存
+      const mem = process.memoryUsage();
+      const toMB = (b: number) => Math.round(b / 1024 / 1024);
+
+      // 负载判断：以正在运行的 job 数为依据
+      const jobCount = runningJobs.length;
+      const currentLoad = jobCount <= 5 ? "low" : jobCount <= 10 ? "medium" : "high";
+
+      res.json({
+        ok: true,
+        snapshot: {
+          runningJobCount: jobCount,
+          runningJobs,
+          uploadsLast1h,
+          uploadsLast24h,
+          totalSessions: allForJobs.length,
+          memory: {
+            heapUsedMB: toMB(mem.heapUsed),
+            heapTotalMB: toMB(mem.heapTotal),
+            rssMB: toMB(mem.rss),
+          },
+          capacityHint: {
+            safeJobConcurrency: 8,
+            maxJobConcurrency: 12,
+            currentLoad,
+          },
+          snapshotAt: now,
+        },
+      });
+    })
+  );
 }
 
