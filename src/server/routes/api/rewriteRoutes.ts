@@ -567,7 +567,7 @@ export function registerRewriteRoutes(params: { router: Router; logger: AppLogge
     })
   );
 
-  /** 自动降分（后台任务）：状态 */
+  /** 自动降分（后台任务）：状态（按 jobId 查询） */
   router.get(
     "/rewrite-to-target/:sessionId/status/:jobId",
     asyncHandler(async (req, res) => {
@@ -576,6 +576,11 @@ export function registerRewriteRoutes(params: { router: Router; logger: AppLogge
       const session = params.store.get(sessionId);
       if (!session) throw new HttpError(404, "SESSION_NOT_FOUND", "找不到该会话");
       const job = session.autoRewriteJob;
+      // "current" 是前端用的别名，返回当前任何状态的 job（无需精确匹配 jobId）
+      if (jobId === "current") {
+        if (!job) throw new HttpError(404, "JOB_NOT_FOUND", "该会话暂无改写任务");
+        return res.json({ ok: true, sessionId, jobId: job.jobId, job });
+      }
       if (!job || job.jobId !== jobId) throw new HttpError(404, "JOB_NOT_FOUND", "找不到该任务");
       res.json({ ok: true, sessionId, jobId, job });
     })

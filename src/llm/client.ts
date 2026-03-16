@@ -23,7 +23,11 @@ export function loadDashscopeConfigFromEnv(): DashscopeConfig {
       ""
     );
   const model = process.env.DASHSCOPE_MODEL?.trim() || "qwen-plus-latest";
-  const timeoutMs = Number(process.env.LLM_TIMEOUT_MS ?? "60000");
+  /**
+   * 单次 LLM 请求超时：正常调用 10-22s，25s 给充足缓冲；
+   * 改为 25s 后，单段最坏耗时从 360s 降至 ~75s，配合 SEGMENT_TIMEOUT_MS=35s 整体封顶。
+   */
+  const timeoutMs = Number(process.env.LLM_TIMEOUT_MS ?? "25000");
 
   if (!apiKey) {
     throw new Error(
@@ -110,6 +114,38 @@ export async function chatJson<T>(
     });
     return { rawText, json, usage };
   } catch (err) {
+    /**
+     * 关键修复：仅对"格式不支持"类错误降级，超时/中止/限流直接重新抛出。
+     *
+     * 设计原因：
+     * - 原逻辑对所有错误均降级，包括超时（AbortError）：第一次超时 60s + 降级再超时 60s = 120s/call；
+     * - rewriteOneInternal 最多 3 次 chatJson → 最坏 360s；
+     * - 配合 SEGMENT_TIMEOUT_MS=90s：实际每段等 90s，20 批 × 90s = 30 分钟（完全吻合生产卡住现象）；
+     * - 修复后：超时直接失败，段落标为 failed 后跳过，不再浪费时间二次请求。
+     */
+    const isTimeout = (err instanceof Error) && (
+      err.name === "AbortError" ||
+      err.name === "TimeoutError" ||
+      err.message.includes("timed out") ||
+      err.message.includes("timeout") ||
+      err.message.includes("ECONNRESET") ||
+      err.message.includes("ECONNABORTED")
+    );
+    const isRateLimit = (err as { status?: number })?.status === 429;
+
+    if (isTimeout || isRateLimit) {
+      // 超时或限流：直接上抛，避免再发一次等价的耗时请求
+      log.warn("LLM chatJson timeout/ratelimit, skipping fallback", {
+        purpose: opts.purpose,
+        ms: Date.now() - t0,
+        isTimeout,
+        isRateLimit,
+        error: err instanceof Error ? err.message : String(err),
+      });
+      throw err;
+    }
+
+    // 其他错误（如 response_format 不支持）：降级重试
     log.warn("LLM chatJson response_format failed; fallback", {
       purpose: opts.purpose,
       ms: Date.now() - t0,
@@ -117,7 +153,7 @@ export async function chatJson<T>(
     });
   }
 
-  // 2) 降级：不带 response_format，但强制提示输出 JSON
+  // 2) 降级：不带 response_format，但强制提示输出 JSON（仅当 response_format 不支持时走到这里）
   const resp2 = await opts.client.chat.completions.create(basePayload);
   const rawText2 = resp2.choices?.[0]?.message?.content ?? "";
   const json2 = safeParseJson<T>(rawText2);
