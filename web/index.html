@@ -198,7 +198,7 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 /* ── progress bar ── */
 .progress-wrap{height:4px;background:var(--g200);border-radius:999px;overflow:hidden;margin-top:8px;display:none}
 .progress-wrap.visible{display:block}
-.progress-bar{height:100%;background:var(--pri);border-radius:999px;transition:width .3s}
+.progress-bar{height:100%;background:var(--pri);border-radius:999px;transition:width .4s ease-out}
 
 /* ── log console ── */
 .console{font-family:var(--font-mono);font-size:12px;background:var(--g900);color:var(--g300);padding:12px 16px;border-radius:8px;max-height:120px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:16px}
@@ -1574,7 +1574,6 @@ uploadBtn.addEventListener("click",async()=>{
     const res=await fetch("/api/upload",{method:"POST",headers:uploadHeaders,body:fd,signal:ctrl.signal});
     clearTimeout(timer);clearInterval(pTimer);
     const json=await res.json();
-    uploadProgressBar.style.width="90%";
     log(json);
     if(json.ok&&json.sessionId){
       state.sessionId=json.sessionId;
@@ -1582,7 +1581,7 @@ uploadBtn.addEventListener("click",async()=>{
       syncExportButtons(`/api/export/${encodeURIComponent(json.sessionId)}`,false);
       const sess=await fetchSession(json.sessionId);state.session=sess;
       uploadProgressBar.style.width="100%";
-      setTimeout(()=>uploadProgress.classList.remove("visible"),600);
+      setTimeout(()=>uploadProgress.classList.remove("visible"),500);
       const rb=sess.reportBefore;
       const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
       state.selected=new Set(riskyIds);
@@ -1709,7 +1708,6 @@ uploadTextBtn.addEventListener("click",async()=>{
     const res=await fetch("/api/upload-text",{method:"POST",headers:getHeaders(),body:JSON.stringify({text:txt}),signal:ctrl.signal});
     clearTimeout(timer2);clearInterval(pTimer2);
     const json=await res.json();
-    uploadProgressBar.style.width="90%";
     // 积分不足（免费额度已耗尽且积分余额不足）
     if(!json.ok&&json.error==="INSUFFICIENT_POINTS"){
       uploadProgress.classList.remove("visible");
@@ -1735,7 +1733,7 @@ uploadTextBtn.addEventListener("click",async()=>{
       syncExportButtons(`/api/export/${encodeURIComponent(json.sessionId)}`,false);
       const sess=await fetchSession(json.sessionId);state.session=sess;
       uploadProgressBar.style.width="100%";
-      setTimeout(()=>uploadProgress.classList.remove("visible"),600);
+      setTimeout(()=>uploadProgress.classList.remove("visible"),500);
       const rb=sess.reportBefore;
       const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
       state.selected=new Set(riskyIds);
