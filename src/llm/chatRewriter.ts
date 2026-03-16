@@ -40,6 +40,8 @@ export type ChatRewriteParams = {
   history: Array<{ role: "user" | "assistant"; content: string }>;
   /** 本次用户消息 */
   userMessage: string;
+  /** LLM 请求超时（ms），覆盖环境变量默认值；chat 通过 SSE keepalive 保活，可适当延长 */
+  timeoutMs?: number;
 };
 
 const SYSTEM_PROMPT = [
@@ -115,7 +117,8 @@ export async function chatRewrite(
   params: ChatRewriteParams
 ): Promise<ChatRewriteOutput> {
   const cfg = loadDashscopeConfigFromEnv();
-  const client = createDashscopeClient(cfg);
+  const effectiveCfg = params.timeoutMs ? { ...cfg, timeoutMs: params.timeoutMs } : cfg;
+  const client = createDashscopeClient(effectiveCfg);
 
   const messages = buildChatRewriteMessages(params);
 

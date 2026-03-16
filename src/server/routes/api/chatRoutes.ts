@@ -76,6 +76,35 @@ export function registerChatRoutes(params: { router: Router; logger: AppLogger; 
         }
       }
 
+      // ── SSE streaming: keep connection alive via pings so nginx never times out ──
+      res.setHeader("Content-Type", "text/event-stream");
+      res.setHeader("Cache-Control", "no-cache");
+      res.setHeader("Connection", "keep-alive");
+      res.setHeader("X-Accel-Buffering", "no"); // disable nginx response buffering
+      res.flushHeaders();
+
+      const sendEvent = (data: Record<string, unknown>) => {
+        if (!res.writableEnded) res.write(`data: ${JSON.stringify(data)}\n\n`);
+      };
+      const pingInterval = setInterval(() => sendEvent({ type: "ping" }), 5000);
+      const cleanup = () => clearInterval(pingInterval);
+
+      const doRefund = () => {
+        if (!isAdmin) {
+          try {
+            ledger.refund(accountId, prechargePoints, {
+              billing: "llm",
+              callId,
+              type: "chat",
+              sessionId,
+              paragraphId: body.paragraphId,
+              reason: "chat_failed",
+              pointsEstimated: prechargePoints,
+            });
+          } catch { /* 退款失败不阻塞 */ }
+        }
+      };
+
       let result: { reply: string; revisedText: string; usage?: { promptTokens: number; completionTokens: number; totalTokens: number } };
       try {
         result = await chatRewrite({
@@ -88,29 +117,20 @@ export function registerChatRoutes(params: { router: Router; logger: AppLogger; 
           signals: signals as any,
           history,
           userMessage: body.message,
+          // chat 请求通过 SSE keepalive 保活，可给 LLM 更长时间响应
+          timeoutMs: 90000,
         });
       } catch (e) {
-        if (!isAdmin) {
-          try {
-            ledger.refund(accountId, prechargePoints, {
-              billing: "llm",
-              callId,
-              type: "chat",
-              sessionId,
-              paragraphId: body.paragraphId,
-              reason: "chat_failed",
-              pointsEstimated: prechargePoints,
-            });
-          } catch {
-            /* 退款失败不阻塞 */
-          }
-        }
+        cleanup();
+        doRefund();
         const msg = e instanceof Error ? e.message : String(e);
-        if (/Missing DASHSCOPE_API_KEY/i.test(msg)) {
-          throw new HttpError(400, "MISSING_DASHSCOPE_API_KEY", "未配置 DASHSCOPE_API_KEY");
-        }
-        throw e;
+        const code = /Missing DASHSCOPE_API_KEY/i.test(msg) ? "MISSING_DASHSCOPE_API_KEY" : "LLM_ERROR";
+        sendEvent({ ok: false, type: "error", error: { code, message: msg } });
+        res.end();
+        return;
       }
+
+      cleanup(); // stop pings before settling
 
       const finalPoints = calcFinalChargePoints({ text: result.revisedText, usage: result.usage, cfg });
       const settle = finalPoints - prechargePoints;
@@ -140,7 +160,9 @@ export function registerChatRoutes(params: { router: Router; logger: AppLogger; 
                 pointsEstimated: prechargePoints,
               });
             } catch {}
-            throw new HttpError(402, "INSUFFICIENT_POINTS", "积分不足：请联系管理员充值");
+            sendEvent({ ok: false, type: "error", error: { code: "INSUFFICIENT_POINTS", message: "积分不足：请联系管理员充值" } });
+            res.end();
+            return;
           }
         } else {
           try {
@@ -182,12 +204,14 @@ export function registerChatRoutes(params: { router: Router; logger: AppLogger; 
 
       log.info("Chat rewrite completed", { sessionId, paragraphId: body.paragraphId, chargedPoints: finalPoints });
 
-      res.json({
+      sendEvent({
         ok: true,
+        type: "done",
         userMsg,
         assistantMsg,
         billing: { accountId, balance: ledger.getBalance(accountId) },
       });
+      res.end();
     })
   );
 
