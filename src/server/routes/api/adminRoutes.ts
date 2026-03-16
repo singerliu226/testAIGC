@@ -317,11 +317,14 @@ export function registerAdminRoutes(params: { router: Router; store: SessionStor
   );
 
   /**
-   * 管理员强制取消某个正在运行的改写任务。
+   * 管理员强制停止某个正在运行的改写任务。
    *
    * 设计原因：
-   * - 普通用户取消接口需要 sessionId + jobId，管理员只需要 sessionId 即可强制停止；
-   * - 用于处理长时间卡住（如 Zeabur 反向代理拦截 AbortController 信号）的任务。
+   * - 普通用户取消接口需要 sessionId + jobId，管理员只需要 sessionId；
+   * - mode=complete：将任务标记为"已完成"并保存已改写的部分结果，用户可正常下载；
+   * - mode=cancel：将任务标记为"已取消"（默认），适合彻底放弃该任务。
+   *
+   * 返回值中包含 exportPath，前端可拼成下载 URL 供管理员转发给用户。
    */
   router.post(
     "/admin/cancel-job/:sessionId",
@@ -331,27 +334,54 @@ export function registerAdminRoutes(params: { router: Router; store: SessionStor
         throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
       }
       const sessionId = String(req.params.sessionId);
+      // mode=complete 将任务标为完成（保留结果可下载）；默认 cancel
+      const mode = req.query.mode === "complete" ? "completed" : "cancelled";
+
       const session = params.store.get(sessionId);
       if (!session) {
         throw new HttpError(404, "NOT_FOUND", `Session 不存在: ${sessionId}`);
       }
       const job = session.autoRewriteJob;
       if (!job || job.status !== "running") {
-        res.json({ ok: false, message: `该 session 没有正在运行的任务（当前状态: ${job?.status ?? "无任务"}）` });
+        const hasRevised = Object.keys(session.revised ?? {}).length > 0;
+        res.json({
+          ok: false,
+          message: `该 session 没有正在运行的任务（当前状态: ${job?.status ?? "无任务"}）`,
+          exportPath: hasRevised ? `/api/export/${sessionId}` : null,
+        });
         return;
       }
+
+      const doneAt = Date.now();
+      const progress = job.progress ?? {};
       params.store.update(sessionId, {
         autoRewriteJob: {
           ...job,
-          status: "cancelled",
-          updatedAt: Date.now(),
-          finishedAt: Date.now(),
-          progress: { ...job.progress, lastMessage: "管理员强制结束" },
+          status: mode,
+          updatedAt: doneAt,
+          finishedAt: doneAt,
+          progress: {
+            ...progress,
+            lastMessage: mode === "completed"
+              ? `管理员强制完成（已改写 ${progress.succeeded ?? 0} 段，共处理 ${progress.processed ?? 0} 段）`
+              : "管理员强制取消",
+          },
         },
       });
-      params.store.get(sessionId); // no-op, just for context
-      console.warn("[admin] force-cancelled job", { sessionId, jobId: job.jobId });
-      res.json({ ok: true, sessionId, jobId: job.jobId, message: "任务已强制结束" });
+
+      const hasRevised = Object.keys(session.revised ?? {}).length > 0;
+      console.warn("[admin] force-stop job", { sessionId, jobId: job.jobId, mode });
+      res.json({
+        ok: true,
+        sessionId,
+        jobId: job.jobId,
+        mode,
+        message: mode === "completed"
+          ? `任务已强制完成，已改写 ${progress.succeeded ?? 0} 段结果已保存，用户可立即下载`
+          : "任务已强制取消",
+        // 下载路径：前端拼上域名后可直接发给用户
+        exportPath: hasRevised ? `/api/export/${sessionId}` : null,
+      });
     })
   );
 }

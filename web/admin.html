@@ -651,26 +651,48 @@ function fmtTime(ts){
   return new Date(ts).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
 }
 
-// ── 管理员强制结束改写任务 ──
-async function adminCancelJob(sessionId, btn){
-  if(!confirm(`确定要强制结束 session ${sessionId.slice(0,8)}… 的改写任务吗？`))return;
-  btn.disabled=true;btn.textContent="处理中…";
+// ── 管理员强制停止改写任务 ──
+// mode: "complete" = 保存结果标记完成（用户可下载）；"cancel" = 直接取消
+async function adminFinishJob(sessionId, mode, btn){
+  const isCmpl=mode==="complete";
+  const label=isCmpl?"强制完成并保存结果":"强制取消任务";
+  if(!confirm(`${label}：Session ${sessionId.slice(0,8)}…？\n\n${isCmpl?"✅ 已改写的段落将保存，用户可立即下载。":"⚠️ 任务将被取消，改写进度丢弃。"}`))return;
+  btn.disabled=true;
+  const origText=btn.textContent;
+  btn.textContent="处理中…";
   try{
-    const res=await fetch(`/api/admin/cancel-job/${encodeURIComponent(sessionId)}`,{
+    const res=await fetch(`/api/admin/cancel-job/${encodeURIComponent(sessionId)}?mode=${isCmpl?"complete":"cancel"}`,{
       method:"POST",headers:adminHeaders()
     });
     const json=await res.json();
     if(json.ok){
-      showToast("任务已强制结束，看板将在下次刷新时更新","ok",3000);
-      btn.closest(".job-card").style.opacity="0.4";
-      btn.textContent="已结束";
+      showToast(json.message||label+"成功","ok",5000);
+      const card=btn.closest(".job-card");
+      if(isCmpl&&json.exportPath){
+        // 生成可发给用户的下载链接（用当前域名拼接）
+        const downloadUrl=location.origin+json.exportPath;
+        // 在卡片内追加下载链接区域
+        const linkDiv=document.createElement("div");
+        linkDiv.style.cssText="margin-top:8px;padding:8px 10px;background:#f0fdf4;border:1px solid #86efac;border-radius:6px;font-size:12px;color:#166534";
+        linkDiv.innerHTML=`<div style="font-weight:600;margin-bottom:4px">📥 结果已保存，下载链接（可发给用户）：</div>
+          <div style="display:flex;align-items:center;gap:6px;flex-wrap:wrap">
+            <input readonly value="${downloadUrl}" style="flex:1;min-width:0;padding:3px 6px;border:1px solid #86efac;border-radius:4px;font-size:11px;background:white;color:#166534" onclick="this.select()">
+            <button onclick="navigator.clipboard.writeText('${downloadUrl}').then(()=>showToast('链接已复制','ok',2000))" style="padding:3px 10px;font-size:11px;border:1px solid var(--ok);border-radius:4px;background:var(--ok);color:white;cursor:pointer;white-space:nowrap">复制链接</button>
+          </div>
+          <div style="margin-top:4px;color:#15803d;font-size:11px">💡 用户打开链接即可直接下载改写后的 .docx 文件，无需重新登录</div>`;
+        card.appendChild(linkDiv);
+        card.style.borderColor="#86efac";
+      }else{
+        card.style.opacity="0.5";
+      }
+      btn.textContent=isCmpl?"✅ 已完成":"已取消";
     }else{
-      showToast(json.message||"操作失败","warn",3000);
-      btn.disabled=false;btn.textContent="⛔ 强制结束";
+      showToast(json.message||"操作失败","warn",4000);
+      btn.disabled=false;btn.textContent=origText;
     }
   }catch(e){
     showToast("请求失败："+e,"err",3000);
-    btn.disabled=false;btn.textContent="⛔ 强制结束";
+    btn.disabled=false;btn.textContent=origText;
   }
 }
 
@@ -737,8 +759,12 @@ async function loadActivity(){
             ${curScore?`<span>${curScore}</span>`:""}
             <span style="color:var(--g400)">账号 ${esc(j.accountIdShort)}</span>
           </div>
-          ${j.sessionId?`<div style="margin-top:6px;display:flex;justify-content:flex-end">
-            <button onclick="adminCancelJob('${j.sessionId}', this)" style="font-size:11px;padding:3px 10px;border:1px solid var(--err);border-radius:4px;background:white;color:var(--err);cursor:pointer;transition:.15s" onmouseover="this.style.background='var(--err)';this.style.color='white'" onmouseout="this.style.background='white';this.style.color='var(--err)'">⛔ 强制结束</button>
+          ${j.sessionId?`<div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
+            <span style="font-size:10px;color:var(--g400);word-break:break-all">Session: ${j.sessionId}</span>
+            <div style="display:flex;gap:6px;flex-shrink:0">
+              <button onclick="adminFinishJob('${j.sessionId}','complete',this)" style="font-size:11px;padding:3px 12px;border:1px solid var(--ok);border-radius:4px;background:white;color:var(--ok);cursor:pointer;transition:.15s" onmouseover="this.style.background='var(--ok)';this.style.color='white'" onmouseout="this.style.background='white';this.style.color='var(--ok)'">✅ 强制完成并保存</button>
+              <button onclick="adminFinishJob('${j.sessionId}','cancel',this)" style="font-size:11px;padding:3px 10px;border:1px solid var(--err);border-radius:4px;background:white;color:var(--err);cursor:pointer;transition:.15s" onmouseover="this.style.background='var(--err)';this.style.color='white'" onmouseout="this.style.background='white';this.style.color='var(--err)'">⛔ 强制取消</button>
+            </div>
           </div>`:""}
         </div>`;
       }).join("");
