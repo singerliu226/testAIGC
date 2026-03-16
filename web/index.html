@@ -304,6 +304,14 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .free-banner-sep{color:#a7f3d0;margin:0 4px}
 
 /* ── responsive ── */
+@media(max-width:760px){
+  /* 使用说明在小屏改为 2 列 */
+  #guideSection>div:nth-child(2){grid-template-columns:repeat(2,1fr)!important}
+}
+@media(max-width:480px){
+  /* 更小屏改为单列 */
+  #guideSection>div:nth-child(2){grid-template-columns:1fr!important}
+}
 @media(max-width:640px){
   .container{padding:12px}
   .header-inner{height:48px}
@@ -502,6 +510,80 @@ body.sidebar-open .action-bar{margin-right:400px}
       </div>
 
       <div class="progress-wrap" id="uploadProgress"><div class="progress-bar" id="uploadProgressBar" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <!-- ══════ GUIDE ══════ -->
+  <div id="guideSection" style="margin-top:20px">
+    <!-- 标题行 -->
+    <div style="text-align:center;margin-bottom:20px">
+      <div style="font-size:15px;font-weight:600;color:var(--g700)">怎么用？四步搞定</div>
+      <div style="font-size:12px;color:var(--g400);margin-top:4px">全程免费检测，改写按需付费，不注册也能用</div>
+    </div>
+
+    <!-- 四步卡片 -->
+    <div style="display:grid;grid-template-columns:repeat(4,1fr);gap:12px">
+
+      <div style="background:white;border:1px solid var(--g200);border-radius:12px;padding:20px 16px;position:relative;overflow:hidden">
+        <div style="position:absolute;top:-6px;right:-6px;width:40px;height:40px;background:var(--pri-l);border-radius:50%;opacity:.6"></div>
+        <div style="font-size:26px;font-weight:800;color:var(--pri);opacity:.18;line-height:1;margin-bottom:10px">01</div>
+        <div style="width:36px;height:36px;background:var(--pri-l);border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:12px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="var(--pri)" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M17 8l-5-5-5 5M12 3v12"/></svg>
+        </div>
+        <div style="font-weight:600;font-size:14px;margin-bottom:6px;color:var(--g900)">上传论文</div>
+        <div style="font-size:12px;color:var(--g500);line-height:1.7">把 .docx 格式的论文拖进上方方框，或点击选择文件，支持最大 20MB</div>
+      </div>
+
+      <div style="background:white;border:1px solid var(--g200);border-radius:12px;padding:20px 16px;position:relative;overflow:hidden">
+        <div style="position:absolute;top:-6px;right:-6px;width:40px;height:40px;background:#fef3c7;border-radius:50%;opacity:.6"></div>
+        <div style="font-size:26px;font-weight:800;color:#d97706;opacity:.18;line-height:1;margin-bottom:10px">02</div>
+        <div style="width:36px;height:36px;background:#fef3c7;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:12px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+        </div>
+        <div style="font-weight:600;font-size:14px;margin-bottom:6px;color:var(--g900)">查看检测结果</div>
+        <div style="font-size:12px;color:var(--g500);line-height:1.7">系统自动逐段扫描，标出疑似 AI 的段落，并给出具体原因和修改建议</div>
+      </div>
+
+      <div style="background:white;border:1px solid var(--g200);border-radius:12px;padding:20px 16px;position:relative;overflow:hidden">
+        <div style="position:absolute;top:-6px;right:-6px;width:40px;height:40px;background:#ede9fe;border-radius:50%;opacity:.6"></div>
+        <div style="font-size:26px;font-weight:800;color:#7c3aed;opacity:.18;line-height:1;margin-bottom:10px">03</div>
+        <div style="width:36px;height:36px;background:#ede9fe;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:12px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2"><path d="M12 2v4M12 18v4M4.93 4.93l2.83 2.83M16.24 16.24l2.83 2.83M2 12h4M18 12h4M4.93 19.07l2.83-2.83M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
+        </div>
+        <div style="font-weight:600;font-size:14px;margin-bottom:6px;color:var(--g900)">一键自动降重</div>
+        <div style="font-size:12px;color:var(--g500);line-height:1.7">选择高风险段落，点击「一键自动降重」，AI 自动多轮改写直到 AI率降到目标值</div>
+      </div>
+
+      <div style="background:white;border:1px solid var(--g200);border-radius:12px;padding:20px 16px;position:relative;overflow:hidden">
+        <div style="position:absolute;top:-6px;right:-6px;width:40px;height:40px;background:#d1fae5;border-radius:50%;opacity:.6"></div>
+        <div style="font-size:26px;font-weight:800;color:#059669;opacity:.18;line-height:1;margin-bottom:10px">04</div>
+        <div style="width:36px;height:36px;background:#d1fae5;border-radius:10px;display:flex;align-items:center;justify-content:center;margin-bottom:12px">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="#059669" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+        </div>
+        <div style="font-weight:600;font-size:14px;margin-bottom:6px;color:var(--g900)">下载改写文档</div>
+        <div style="font-size:12px;color:var(--g500);line-height:1.7">改写完成后点「预览并下载论文」，下载带改写内容的 .docx，格式排版完整保留</div>
+      </div>
+
+    </div>
+
+    <!-- 常见问题小条 -->
+    <div style="display:flex;flex-wrap:wrap;gap:8px;margin-top:16px;justify-content:center">
+      <div style="background:white;border:1px solid var(--g200);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--g600);display:flex;align-items:center;gap:6px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
+        检测完全免费，不限次数
+      </div>
+      <div style="background:white;border:1px solid var(--g200);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--g600);display:flex;align-items:center;gap:6px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
+        论文内容不会泄露，仅本机存储
+      </div>
+      <div style="background:white;border:1px solid var(--g200);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--g600);display:flex;align-items:center;gap:6px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
+        刷新不丢失，随时可恢复改写进度
+      </div>
+      <div style="background:white;border:1px solid var(--g200);border-radius:8px;padding:8px 14px;font-size:12px;color:var(--g600);display:flex;align-items:center;gap:6px">
+        <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+        改写消耗积分，自动降重平均每段约 3 积分
+      </div>
     </div>
   </div>
 
@@ -1165,6 +1247,8 @@ function render(){
   if(!state.session)return;
   overviewCard.classList.remove("hidden");
   reportCard.classList.remove("hidden");
+  // 上传成功后隐藏使用说明，避免与结果混在一起
+  document.getElementById("guideSection")?.classList.add("hidden");
 
   const rb=state.session.reportBefore,ra=state.session.reportAfter;
   const sBefore=rb?rb.overallRiskScore:0,sAfter=ra?ra.overallRiskScore:null;
