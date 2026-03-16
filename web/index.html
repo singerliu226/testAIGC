@@ -345,6 +345,41 @@ body.sidebar-open .action-bar{margin-right:400px}
 @keyframes fadeIn{from{opacity:0;transform:translateY(8px)}to{opacity:1;transform:none}}
 .fade-in{animation:fadeIn .3s ease}
 .hidden{display:none!important}
+
+/* ── text fallback (paste input) ── */
+.text-fallback{margin-top:14px;border-top:1px solid var(--g200);padding-top:14px}
+.text-fallback-toggle{font-size:13px;color:var(--g400);cursor:pointer;display:flex;align-items:center;justify-content:center;gap:6px;transition:.15s;user-select:none;padding:4px 0}
+.text-fallback-toggle:hover{color:var(--pri)}
+.text-fallback-toggle-arrow{transition:transform .2s;display:inline-flex}
+.text-fallback-toggle-arrow.open{transform:rotate(180deg)}
+.text-fallback-body{margin-top:12px}
+.text-fallback textarea{width:100%;min-height:320px;border:1px solid var(--g300);border-radius:10px;padding:12px 14px;font-size:13px;font-family:var(--font-sans);line-height:1.7;resize:vertical;color:var(--g900);outline:none;transition:.15s;display:block}
+.text-fallback textarea:focus{border-color:var(--pri);box-shadow:0 0 0 3px rgba(79,70,229,.1)}
+.text-fallback-meta{display:flex;align-items:center;justify-content:space-between;margin-top:6px;font-size:12px;color:var(--g400);line-height:1.5}
+.text-fallback-meta .count{font-family:var(--font-mono);transition:.2s}
+.text-fallback-meta .count.warn{color:var(--warn);font-weight:600}
+.text-fallback-tip{font-size:12px;color:var(--g400);margin-top:6px;line-height:1.6;padding:8px 12px;background:var(--g50);border-radius:6px}
+.text-fallback-actions{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
+.text-fallback-para-warn{font-size:12px;color:var(--warn);display:none}
+.text-fallback-para-warn.show{display:block}
+
+/* ── text result modal ── */
+.text-result-header-info{font-size:13px;color:var(--g500);margin-bottom:12px;line-height:1.5}
+.text-result-actions{display:flex;gap:8px;align-items:center;margin-bottom:12px;flex-wrap:wrap}
+.text-result-stats{font-size:12px;color:var(--g400);font-family:var(--font-mono)}
+.text-result-list{border:1px solid var(--g200);border-radius:8px;max-height:460px;overflow-y:auto}
+.text-result-para{padding:10px 14px;border-bottom:1px solid var(--g100);display:flex;align-items:flex-start;gap:10px;font-size:13px;line-height:1.7}
+.text-result-para:last-child{border-bottom:none}
+.text-result-para.modified{background:#f0fdf4;border-left:3px solid var(--ok)}
+.text-result-para.unmodified{color:var(--g500)}
+.text-result-para-text{flex:1;word-break:break-all}
+.text-result-para-badge{font-size:10px;font-weight:600;padding:2px 6px;border-radius:4px;white-space:nowrap;flex-shrink:0;margin-top:2px}
+.text-result-para-badge.modified{background:#dcfce7;color:#166534}
+.text-result-para-badge.unmodified{background:var(--g100);color:var(--g400)}
+.text-result-copy-btn{background:none;border:1px solid var(--g200);border-radius:6px;cursor:pointer;padding:3px 8px;font-size:11px;color:var(--g500);white-space:nowrap;flex-shrink:0;transition:.15s;margin-top:1px}
+.text-result-copy-btn:hover{border-color:var(--pri);color:var(--pri)}
+.text-result-copy-btn.copied{border-color:var(--ok);color:var(--ok)}
+.text-result-empty-tip{padding:16px 14px;font-size:13px;color:var(--warn);background:#fffbeb;border-radius:8px;border:1px solid var(--warn-bd);margin-bottom:12px;line-height:1.6}
 </style>
 </head>
 <body>
@@ -399,6 +434,44 @@ body.sidebar-open .action-bar{margin-right:400px}
         <span class="free-banner-sep" id="buySep">|</span>
         <span>需要改写可随时购买积分</span>
       </div>
+
+      <!-- ── 纯文字粘贴备用入口 ── -->
+      <div class="text-fallback">
+        <div class="text-fallback-toggle" id="textFallbackToggle">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M14 2H6a2 2 0 00-2 2v16a2 2 0 002 2h12a2 2 0 002-2V8z"/><polyline points="14 2 14 8 20 8"/><line x1="16" y1="13" x2="8" y2="13"/><line x1="16" y1="17" x2="8" y2="17"/><polyline points="10 9 9 9 8 9"/></svg>
+          文件上传失败？试试把文字直接粘贴进来检测
+          <span class="text-fallback-toggle-arrow" id="textFallbackArrow">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><polyline points="6 9 12 15 18 9"/></svg>
+          </span>
+        </div>
+        <div class="text-fallback-body hidden" id="textFallbackBody">
+          <textarea id="textInput" placeholder="把论文正文粘贴到这里。
+
+每段之间保留一行空行，系统会自动识别段落边界，效果更好。
+
+支持直接从 Word / PDF / 网页复制，最多 150,000 字（约 300 段）。"></textarea>
+          <div class="text-fallback-meta">
+            <span class="count" id="textInputCount">0 字 · 0 段</span>
+            <span style="color:var(--g300)">最多 150,000 字</span>
+          </div>
+          <div class="text-fallback-para-warn" id="textParaWarn">
+            ⚠ 内容较多，建议分批粘贴，每次 20 段以内效果更可控，结果也更准确
+          </div>
+          <div class="text-fallback-tip">
+            ✔ 与上传文件完全等效：同样打分、同样支持一键自动降重<br>
+            ✔ 改写完成后可一键复制全文，或按段复制粘贴回 Word<br>
+            ✔ 文字仅用于本次检测，不会被保存或用于其他用途
+          </div>
+          <div class="text-fallback-actions">
+            <span style="font-size:12px;color:var(--g400)">建议每次粘贴 5–20 段，分批处理更可控</span>
+            <button class="btn btn-primary" id="uploadTextBtn" style="padding:9px 28px;font-size:13px">
+              <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="11" cy="11" r="8"/><line x1="21" y1="21" x2="16.65" y2="16.65"/></svg>
+              开始检测
+            </button>
+          </div>
+        </div>
+      </div>
+
       <div class="progress-wrap" id="uploadProgress"><div class="progress-bar" id="uploadProgressBar" style="width:0%"></div></div>
     </div>
   </div>
@@ -549,6 +622,38 @@ body.sidebar-open .action-bar{margin-right:400px}
     <div id="verifyPanel" class="verify-panel hidden"></div>
     <div class="modal-body">
       <div class="preview-content" id="previewContent"></div>
+    </div>
+  </div>
+</div>
+
+<!-- ══════ TEXT RESULT MODAL（纯文字会话改写结果） ══════ -->
+<div class="modal-overlay" id="textResultModal">
+  <div class="modal" style="max-width:680px;max-height:90vh;display:flex;flex-direction:column">
+    <div class="modal-header">
+      <span>改写结果</span>
+      <button class="icon-btn" id="textResultClose">&times;</button>
+    </div>
+    <div class="modal-body" style="padding:20px;overflow-y:auto;flex:1">
+      <div id="textResultEmptyTip" class="text-result-empty-tip hidden">
+        📝 还没有改写任何段落——下方显示的是原始内容。<br>
+        关闭此窗口后点击<strong>「一键自动降重」</strong>，改写完成后再回来查看结果。
+      </div>
+      <div class="text-result-header-info">
+        把改写后的文字复制，粘贴回你的 Word 文档替换原内容即可。<br>
+        绿色段落 = 已改写；灰色段落 = 未改写（可保留原文）。
+      </div>
+      <div class="text-result-actions">
+        <button class="btn btn-primary btn-sm" id="textResultCopyAll">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg>
+          一键复制全文
+        </button>
+        <button class="btn btn-outline btn-sm" id="textResultDownload">
+          <svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          下载为 .txt
+        </button>
+        <span class="text-result-stats" id="textResultStats"></span>
+      </div>
+      <div class="text-result-list" id="textResultList"></div>
     </div>
   </div>
 </div>
@@ -714,6 +819,10 @@ let adminSecret=localStorage.getItem(adminSecretKey)||"";
 function getHeaders(){const h={"Content-Type":"application/json","x-account-id":accountId};if(adminSecret)h["x-admin-secret"]=adminSecret;return h}
 let queue={running:false,cancelled:false,total:0,done:0,failed:0};
 const rwProgress=$("rewriteProgress"),rwProgressFill=$("rewriteProgressFill"),rwProgressText=$("rewriteProgressText"),toastEl=$("toast");
+// 文字粘贴区相关 DOM
+const textFallbackToggle=$("textFallbackToggle"),textFallbackBody=$("textFallbackBody"),textFallbackArrow=$("textFallbackArrow"),textInput=$("textInput"),textInputCount=$("textInputCount"),textParaWarn=$("textParaWarn"),uploadTextBtn=$("uploadTextBtn");
+// 文字结果弹窗相关 DOM
+const textResultModal=$("textResultModal"),textResultClose=$("textResultClose"),textResultCopyAll=$("textResultCopyAll"),textResultDownload=$("textResultDownload"),textResultStats=$("textResultStats"),textResultList=$("textResultList"),textResultEmptyTip=$("textResultEmptyTip");
 
 function showToast(msg,type,duration){
   toastEl.textContent=msg;
@@ -730,11 +839,21 @@ function setRwProgress(done,total,text){
 
 function log(obj){out.textContent=typeof obj==="string"?obj:JSON.stringify(obj,null,2);out.scrollTop=out.scrollHeight}
 let _exportHref="#";
-/** 同步顶部和底部两个预览/下载按钮的可见性，并保存下载链接 */
+/**
+ * 同步顶部和底部两个预览/下载按钮的可见性，并保存下载链接。
+ * 文字粘贴会话时，将按钮文案改为"查看改写结果"并绑定文字结果弹窗，
+ * 而不是触发 docx 下载/预览，因为粘贴用户没有原始 Word 文件。
+ */
 function syncExportButtons(href,visible){
   if(href&&href!=="#"){_exportHref=href;previewDownload.href=href;}
   exportLink.classList.toggle("hidden",!visible);
   exportTop.classList.toggle("hidden",!visible);
+  // 文字会话切换按钮文案与行为
+  const isText=state.session?.isTextInput||false;
+  exportTop.innerHTML=isText
+    ?`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> 查看改写结果`
+    :`<svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg> 预览并下载论文`;
+  exportTop.onclick=isText?openTextResult:openPreview;
 }
 function scoreToLevel(s){return s>=70?"high":s>=35?"medium":"low"}
 const categoryZh={languageStats:"语言统计",styleHabits:"写作风格",logicCoherence:"逻辑连贯",verifiability:"事实可查",structureFormat:"结构格式",aiPattern:"AI 句式",cognitiveFeatures:"认知特征"};
@@ -1314,6 +1433,186 @@ uploadBtn.addEventListener("click",async()=>{
     dropZone.style.borderColor="";dropZone.style.background="";
   }
 });
+
+// ── 纯文字粘贴区：折叠展开 ──
+textFallbackToggle.addEventListener("click",()=>{
+  const isOpen=!textFallbackBody.classList.contains("hidden");
+  textFallbackBody.classList.toggle("hidden",isOpen);
+  textFallbackArrow.classList.toggle("open",!isOpen);
+});
+
+// ── 纯文字粘贴区：实时字数/段落统计 ──
+textInput.addEventListener("input",()=>{
+  const txt=textInput.value;
+  const chars=txt.length;
+  // 优先按空行分段，退化为单换行
+  let paras=txt.split(/\n{2,}/).filter(p=>p.trim());
+  if(paras.length<2)paras=txt.split(/\n/).filter(p=>p.trim());
+  const paraCount=paras.length;
+  const countEl=textInputCount;
+  countEl.textContent=`${chars.toLocaleString()} 字 · ${paraCount} 段`;
+  const isWarn=chars>80000||paraCount>30;
+  countEl.classList.toggle("warn",isWarn);
+  textParaWarn.classList.toggle("show",paraCount>30);
+});
+
+// ── 纯文字粘贴区：上传逻辑 ──
+uploadTextBtn.addEventListener("click",async()=>{
+  const txt=textInput.value.trim();
+  if(!txt){showToast("请先粘贴文字内容","warn",3000);return;}
+  if(txt.length>150000){showToast("文字超过 15 万字上限，请分批粘贴","err",4000);return;}
+  uploadTextBtn.disabled=true;
+  syncExportButtons(null,false);overviewCard.classList.add("hidden");reportCard.classList.add("hidden");actionBar.classList.remove("visible");
+  closeChat();
+  state={sessionId:null,session:null,selected:new Set(),chatParagraphId:null,chatSending:false};
+  uploadProgress.classList.add("visible");uploadProgressBar.style.width="10%";
+  dropTitle.textContent="正在分析文字内容并检测 AI 痕迹…";
+  // 根据文字量给出等待预期
+  const chars=txt.length;
+  let hintText2,pInterval2;
+  if(chars<5000){hintText2="约需 5–15 秒，请稍候";pInterval2=600;}
+  else if(chars<30000){hintText2="约需 15–30 秒，请稍候";pInterval2=1000;}
+  else{hintText2="内容较多，约需 30–60 秒，请耐心等待";pInterval2=1500;}
+  dropHint.textContent=hintText2;
+  const ctrl=new AbortController();
+  const timer2=setTimeout(()=>ctrl.abort(),300000);
+  let pct2=10;const pTimer2=setInterval(()=>{pct2=Math.min(pct2+2,85);uploadProgressBar.style.width=pct2+"%"},pInterval2);
+  try{
+    const res=await fetch("/api/upload-text",{method:"POST",headers:getHeaders(),body:JSON.stringify({text:txt}),signal:ctrl.signal});
+    clearTimeout(timer2);clearInterval(pTimer2);
+    const json=await res.json();
+    uploadProgressBar.style.width="90%";
+    if(json.ok&&json.sessionId){
+      state.sessionId=json.sessionId;
+      localStorage.setItem(lastSessionKey,json.sessionId);
+      syncExportButtons(`/api/export/${encodeURIComponent(json.sessionId)}`,false);
+      const sess=await fetchSession(json.sessionId);state.session=sess;
+      uploadProgressBar.style.width="100%";
+      setTimeout(()=>uploadProgress.classList.remove("visible"),600);
+      const rb=sess.reportBefore;
+      const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
+      state.selected=new Set(riskyIds);
+      activeFilter=riskyIds.length>0?"medium":"all";
+      render();
+      // 成功后折叠粘贴区
+      textFallbackBody.classList.add("hidden");
+      textFallbackArrow.classList.remove("open");
+      if(json.judgeStatus==="pending"){
+        showToast("规则检测完成，AI 复核正在后台进行中…","ok",4000);
+        let polls3=0;const maxPolls3=12;
+        const pollTimer3=setInterval(async()=>{
+          polls3++;
+          try{
+            const s2=await fetchSession(json.sessionId);
+            if(!s2)return;
+            const oldScore=state.session?.reportBefore?.overallRiskScore;
+            const newScore=s2.reportBefore?.overallRiskScore;
+            state.session=s2;
+            if(newScore!==oldScore){
+              const rb2=s2.reportBefore;
+              const ids2=(rb2?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
+              state.selected=new Set(ids2);
+              render();
+              showToast("AI 复核完成，结果已更新","ok",3000);
+              clearInterval(pollTimer3);
+            }else if(polls3>=maxPolls3){clearInterval(pollTimer3);}
+          }catch(e){clearInterval(pollTimer3);}
+        },5000);
+      }
+    }else{
+      showToast("检测失败："+(json.message||json.error||"未知错误"),"err",5000);
+      uploadProgress.classList.remove("visible");
+    }
+  }catch(e){
+    clearTimeout(timer2);clearInterval(pTimer2);
+    const msg=String(e);
+    if(msg.includes("abort")||msg.includes("Abort")){
+      showToast("检测超时，请尝试减少粘贴内容量","err",5000);
+    }else{
+      showToast("上传失败："+msg,"err",5000);
+    }
+    uploadProgress.classList.remove("visible");
+  }finally{
+    uploadTextBtn.disabled=false;
+    dropTitle.textContent="拖拽或点击上传 .docx 文件";
+    dropHint.textContent="支持论文、开题报告、答辩稿等 Word 文档，最大 20MB";
+  }
+});
+
+// ── 文字结果弹窗：打开 ──
+function openTextResult(){
+  if(!state.session)return;
+  const paras=state.session.paragraphs||[];
+  const revised=state.session.revised||{};
+  const revisedIds=new Set(Object.keys(revised));
+  let modCount=0;
+  const lines=[];
+  for(const p of paras){
+    if(p.kind==="imageParagraph")continue;
+    const isModified=revisedIds.has(p.id);
+    const text=isModified?revised[p.id]:p.text;
+    if(isModified)modCount++;
+    lines.push({id:p.id,text,isModified});
+  }
+  // 空状态提示
+  textResultEmptyTip.classList.toggle("hidden",modCount>0);
+  // 统计信息
+  const totalChars=lines.reduce((s,l)=>s+l.text.length,0);
+  textResultStats.textContent=`${lines.length} 段 · ${totalChars.toLocaleString()} 字 · 已改写 ${modCount} 段`;
+  // 渲染段落列表
+  textResultList.innerHTML=lines.map((l,i)=>`
+    <div class="text-result-para ${l.isModified?"modified":"unmodified"}">
+      <span class="text-result-para-badge ${l.isModified?"modified":"unmodified"}">${l.isModified?"已改写":"未改写"}</span>
+      <span class="text-result-para-text">${escapeHtml(l.text)}</span>
+      <button class="text-result-copy-btn" onclick="copyParaText(this,'${l.id.replace(/'/g,"\\'")}')" title="复制本段">复制</button>
+    </div>`).join("");
+  textResultModal.classList.add("open");
+}
+
+// 复制单段文字
+function copyParaText(btn,paraId){
+  const revised=state.session?.revised||{};
+  const paras=state.session?.paragraphs||[];
+  const p=paras.find(x=>x.id===paraId);
+  if(!p)return;
+  const text=revised[paraId]??p.text;
+  navigator.clipboard.writeText(text).then(()=>{
+    btn.textContent="已复制 ✔";btn.classList.add("copied");
+    setTimeout(()=>{btn.textContent="复制";btn.classList.remove("copied");},2000);
+  }).catch(()=>showToast("复制失败，请手动选择文字","err",3000));
+}
+
+// 一键复制全文
+textResultCopyAll.addEventListener("click",()=>{
+  if(!state.session)return;
+  const paras=state.session.paragraphs||[];
+  const revised=state.session.revised||{};
+  const lines=paras.filter(p=>p.kind!=="imageParagraph").map(p=>revised[p.id]??p.text);
+  const fullText=lines.join("\n\n");
+  navigator.clipboard.writeText(fullText).then(()=>{
+    textResultCopyAll.textContent="已复制全文 ✔";
+    setTimeout(()=>{textResultCopyAll.innerHTML=`<svg width="13" height="13" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="9" y="9" width="13" height="13" rx="2" ry="2"/><path d="M5 15H4a2 2 0 01-2-2V4a2 2 0 012-2h9a2 2 0 012 2v1"/></svg> 一键复制全文`;},2500);
+  }).catch(()=>showToast("复制失败，请手动全选文字","err",3000));
+});
+
+// 下载为 .txt
+textResultDownload.addEventListener("click",()=>{
+  if(!state.session)return;
+  const paras=state.session.paragraphs||[];
+  const revised=state.session.revised||{};
+  const lines=paras.filter(p=>p.kind!=="imageParagraph").map(p=>revised[p.id]??p.text);
+  const fullText=lines.join("\n\n");
+  const blob=new Blob([fullText],{type:"text/plain;charset=utf-8"});
+  const url=URL.createObjectURL(blob);
+  const a=document.createElement("a");
+  a.href=url;a.download=`改写结果-${new Date().toISOString().slice(0,10)}.txt`;
+  document.body.appendChild(a);a.click();
+  setTimeout(()=>{document.body.removeChild(a);URL.revokeObjectURL(url);},1000);
+});
+
+// 关闭文字结果弹窗
+textResultClose.addEventListener("click",()=>textResultModal.classList.remove("open"));
+textResultModal.addEventListener("click",e=>{if(e.target===textResultModal)textResultModal.classList.remove("open");});
 
 rewriteToTargetBtn.addEventListener("click",async()=>{
   if(!state.sessionId||queue.running)return;

@@ -8,7 +8,7 @@ import { registerChatRoutes } from "./api/chatRoutes.js";
 import { registerExportRoutes } from "./api/exportRoutes.js";
 import { registerRewriteRoutes } from "./api/rewriteRoutes.js";
 import { registerSessionRoutes } from "./api/sessionRoutes.js";
-import { registerUploadRoutes } from "./api/uploadRoutes.js";
+import { registerUploadRoutes, registerUploadTextRoute } from "./api/uploadRoutes.js";
 
 /**
  * API 路由入口：按模块注册各类端点。
@@ -28,6 +28,7 @@ export function createApiRouter(params: { logger: AppLogger; store: SessionStore
 
   registerBaseRoutes({ router, logger: params.logger });
   registerUploadRoutes({ router, logger: params.logger, store: params.store, upload });
+  registerUploadTextRoute({ router, logger: params.logger, store: params.store });
   registerSessionRoutes({ router, store: params.store });
   registerRewriteRoutes({ router, logger: params.logger, store: params.store });
   registerExportRoutes({ router, store: params.store });

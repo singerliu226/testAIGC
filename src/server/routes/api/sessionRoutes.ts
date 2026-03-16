@@ -57,6 +57,8 @@ export function registerSessionRoutes(params: { router: Router; store: SessionSt
         // 各段落跨任务累计改写次数，用于前端预检弹窗展示顽固段落数量
         paragraphRewriteCounts: session.paragraphRewriteCounts ?? {},
         chatMessages: session.chatMessages ?? [],
+        // 标记纯文字粘贴会话，前端据此切换"查看改写结果"面板而非下载 docx
+        isTextInput: session.isTextInput ?? false,
         exportUrl: `/api/export/${encodeURIComponent(sessionId)}`,
       });
     })
