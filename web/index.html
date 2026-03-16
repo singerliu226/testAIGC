@@ -85,7 +85,11 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .delta-bar{margin-top:12px;padding:10px 14px;border-radius:8px;font-size:13px}
 
 /* ── tab filter ── */
-.tab-filter{display:flex;gap:0;border-bottom:1px solid var(--g200);padding:0 20px}
+/*
+ * 让 tab-filter 跟随页面滚动时粘在顶部导航下方（top:56px），
+ * 防止其滚走后 sticky-thead 与第一行内容重叠，导致首行顶部被遮住。
+ */
+.tab-filter{display:flex;gap:0;border-bottom:1px solid var(--g200);padding:0 20px;position:sticky;top:56px;z-index:9;background:white}
 .tab-filter-item{padding:10px 18px;font-size:13px;font-weight:500;cursor:pointer;border-bottom:2px solid transparent;color:var(--g500);transition:.15s;display:flex;align-items:center;gap:6px}
 .tab-filter-item:hover{color:var(--g900)}
 .tab-filter-item.active{color:var(--pri);border-color:var(--pri)}
@@ -101,8 +105,9 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 
 /* ── report table ── */
 .report-table{width:100%;border-collapse:collapse}
-.report-table thead th{text-align:left;font-size:12px;font-weight:600;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;padding:10px 16px;background:var(--g50);border-bottom:1px solid var(--g200);position:sticky;top:56px;z-index:10}
-.report-table tbody tr{border-bottom:1px solid var(--g100);transition:.1s}
+/* thead top = 页面导航(56px) + sticky tab-filter 高度(约 43px) = 99px */
+.report-table thead th{text-align:left;font-size:12px;font-weight:600;color:var(--g500);text-transform:uppercase;letter-spacing:.04em;padding:10px 16px;background:var(--g50);border-bottom:1px solid var(--g200);position:sticky;top:99px;z-index:8}
+.report-table tbody tr{border-bottom:1px solid var(--g100);transition:.1s;scroll-margin-top:140px}
 .report-table tbody tr:hover{background:var(--g50)}
 .report-table td{padding:12px 16px;vertical-align:top;font-size:14px}
 .report-table td:first-child{width:44px;text-align:center}
