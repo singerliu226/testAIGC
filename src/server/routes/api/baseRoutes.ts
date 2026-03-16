@@ -7,12 +7,31 @@ import {
   getDefaultFreePoints,
   ledger,
   redeemStore,
+  getAccountInfo,
 } from "../../../billing/index.js";
 
 export function registerBaseRoutes(params: { router: Router; logger: AppLogger }) {
   const router = params.router;
 
   router.get("/health", (_req, res) => res.json({ ok: true }));
+
+  /**
+   * 账号信息：返回积分余额与文字粘贴检测免费额度剩余量。
+   *
+   * 设计原因：
+   * - 前端在页面初始化时调用一次，让粘贴区实时显示剩余额度，
+   *   避免用户等到提交后才发现额度不足。
+   * - 只返回当前账号的公开信息，不涉及敏感数据。
+   */
+  router.get(
+    "/account/info",
+    asyncHandler(async (req, res) => {
+      const accountId = getAccountIdFromRequestHeader(req.header("x-account-id"));
+      ledger.ensureAccount(accountId, getDefaultFreePoints());
+      const info = getAccountInfo(accountId);
+      res.json({ ok: true, accountId, ...info });
+    })
+  );
 
   /**
    * 前端配置注入：将可安全暴露的环境变量传给前端（不含密钥类信息）。

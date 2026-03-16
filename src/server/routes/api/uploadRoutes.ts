@@ -10,7 +10,14 @@ import { judgeParagraphWithDashscope } from "../../../llm/judge.js";
 import { asyncHandler } from "../asyncHandler.js";
 import { uploadLimiter } from "../../rateLimit.js";
 import { HttpError } from "../../errors.js";
-import { getAccountIdFromRequestHeader, getDefaultFreePoints, ledger } from "../../../billing/index.js";
+import {
+  getAccountIdFromRequestHeader,
+  getDefaultFreePoints,
+  ledger,
+  consumeFreeTextChars,
+  getFreeTextCharsRemaining,
+  FREE_TEXT_CHARS_QUOTA,
+} from "../../../billing/index.js";
 
 export function registerUploadRoutes(params: {
   router: Router;
@@ -289,10 +296,31 @@ export function registerUploadTextRoute(params: {
         throw new HttpError(400, "EMPTY_TEXT", "未能从粘贴内容中识别有效段落，请检查文字格式");
       }
 
+      // ── 免费额度检查 ──
+      // 文字粘贴检测不消耗积分，但每账号终身只有 FREE_TEXT_CHARS_QUOTA（10,000 字）的免费额度。
+      // 额度用尽后返回 402，引导用户改用文件上传（永久免费）。
+      const charLen = body.text.length;
+      try {
+        consumeFreeTextChars(accountId, charLen);
+      } catch (quotaErr: unknown) {
+        if ((quotaErr as { code?: string }).code === "FREE_TEXT_QUOTA_EXCEEDED") {
+          const freeRemaining = getFreeTextCharsRemaining(accountId);
+          res.status(402).json({
+            ok: false,
+            error: "FREE_TEXT_QUOTA_EXCEEDED",
+            message: `文字检测免费额度（${FREE_TEXT_CHARS_QUOTA.toLocaleString()} 字）已用完。直接上传 .docx 文件可永久免费检测。`,
+            freeRemaining,
+          });
+          return;
+        }
+        throw quotaErr;
+      }
+
       log.info("Text upload: split paragraphs", {
         accountId,
         paragraphCount: paragraphTexts.length,
         totalChars: body.text.length,
+        freeRemaining: getFreeTextCharsRemaining(accountId),
       });
 
       // 生成最小合法 docx，保证后续 parseDocx / patchDocxParagraphs 可正常工作
@@ -339,6 +367,8 @@ export function registerUploadTextRoute(params: {
         report: reportBefore,
         judgeStatus: "pending",
         message: "规则检测完成，LLM 复核正在后台进行中…",
+        // 额度消耗后剩余量，供前端实时更新配额显示
+        freeRemaining: getFreeTextCharsRemaining(accountId),
       });
 
       // ── LLM 复核在后台异步执行（与 /upload 逻辑完全相同） ──

@@ -11,11 +11,23 @@ export type LedgerTx = {
   meta?: Record<string, unknown>;
 };
 
+/** 每账号终身免费文字粘贴检测总字数上限 */
+export const FREE_TEXT_CHARS_QUOTA = 10_000;
+
 export type LedgerAccount = {
   accountId: string;
   balance: number;
   createdAt: number;
   updatedAt: number;
+  /**
+   * 该账号已累计消耗的免费文字粘贴检测字数。
+   *
+   * 设计原因：
+   * - 文字粘贴入口面向无法上传 .docx 的用户提供兜底检测；
+   * - 为防止滥用，每账号终身提供 FREE_TEXT_CHARS_QUOTA（10,000 字）的免费额度；
+   * - 存储已消耗量而非剩余量，方便加法累计，避免负数边界问题。
+   */
+  freeTextCharsUsed?: number;
 };
 
 type LedgerFileState = {
@@ -50,16 +62,57 @@ export class FileLedger {
   ensureAccount(accountId: string, initialBalance: number): LedgerAccount {
     const now = Date.now();
     const cur = this.state.accounts[accountId];
-    if (cur) return cur;
+    if (cur) {
+      // 兼容旧账号数据：若缺少 freeTextCharsUsed 字段则补全为 0
+      if (cur.freeTextCharsUsed === undefined) {
+        cur.freeTextCharsUsed = 0;
+        this.persist();
+      }
+      return cur;
+    }
     const acc: LedgerAccount = {
       accountId,
       balance: Math.max(0, Math.floor(initialBalance)),
       createdAt: now,
       updatedAt: now,
+      freeTextCharsUsed: 0,
     };
     this.state.accounts[accountId] = acc;
     this.persist();
     return acc;
+  }
+
+  /**
+   * 返回该账号剩余的免费文字粘贴检测字数。
+   * 若账号不存在则返回完整配额（后续 ensureAccount 会初始化）。
+   */
+  getFreeTextCharsRemaining(accountId: string): number {
+    const used = this.state.accounts[accountId]?.freeTextCharsUsed ?? 0;
+    return Math.max(0, FREE_TEXT_CHARS_QUOTA - used);
+  }
+
+  /**
+   * 消耗 n 个字的免费文字检测额度。
+   *
+   * 实现方式：
+   * - 若 `used + n > QUOTA`，抛出带 `code=FREE_TEXT_QUOTA_EXCEEDED` 的错误；
+   * - 否则累计 `freeTextCharsUsed += n` 并持久化。
+   */
+  consumeFreeTextChars(accountId: string, n: number): void {
+    const acc = this.state.accounts[accountId];
+    if (!acc) throw new Error(`Account not found: ${accountId}`);
+    const used = acc.freeTextCharsUsed ?? 0;
+    if (used + n > FREE_TEXT_CHARS_QUOTA) {
+      const err = new Error("FREE_TEXT_QUOTA_EXCEEDED");
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).code = "FREE_TEXT_QUOTA_EXCEEDED";
+      // eslint-disable-next-line @typescript-eslint/no-explicit-any
+      (err as any).freeRemaining = Math.max(0, FREE_TEXT_CHARS_QUOTA - used);
+      throw err;
+    }
+    acc.freeTextCharsUsed = used + n;
+    acc.updatedAt = Date.now();
+    this.persist();
   }
 
   getBalance(accountId: string): number {

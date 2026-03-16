@@ -362,6 +362,11 @@ body.sidebar-open .action-bar{margin-right:400px}
 .text-fallback-actions{display:flex;justify-content:space-between;align-items:center;margin-top:10px}
 .text-fallback-para-warn{font-size:12px;color:var(--warn);display:none}
 .text-fallback-para-warn.show{display:block}
+.text-quota-bar{display:flex;align-items:center;gap:5px;font-size:12px;color:var(--g400);margin-top:8px;padding:6px 10px;background:var(--g50);border-radius:6px;border:1px solid var(--g200);line-height:1.5}
+.text-quota-bar.exhausted{color:var(--warn);background:#fffbeb;border-color:var(--warn-bd)}
+.text-quota-bar strong{color:var(--g700);font-family:var(--font-mono);font-size:12px}
+.text-quota-bar.exhausted strong{color:var(--warn)}
+.text-quota-estimate{margin-left:8px;padding-left:8px;border-left:1px solid var(--g200);color:var(--g400)}
 
 /* ── text result modal ── */
 .text-result-header-info{font-size:13px;color:var(--g500);margin-bottom:12px;line-height:1.5}
@@ -461,6 +466,12 @@ body.sidebar-open .action-bar{margin-right:400px}
             ✔ 与上传文件完全等效：同样打分、同样支持一键自动降重<br>
             ✔ 改写完成后可一键复制全文，或按段复制粘贴回 Word<br>
             ✔ 文字仅用于本次检测，不会被保存或用于其他用途
+          </div>
+          <!-- 免费额度状态条 -->
+          <div class="text-quota-bar" id="textQuotaBar">
+            <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+            免费检测额度：<strong id="textQuotaLeft">10,000</strong> 字剩余
+            <span class="text-quota-estimate hidden" id="textQuotaEstimate"></span>
           </div>
           <div class="text-fallback-actions">
             <span style="font-size:12px;color:var(--g400)">建议每次粘贴 5–20 段，分批处理更可控</span>
@@ -821,6 +832,9 @@ let queue={running:false,cancelled:false,total:0,done:0,failed:0};
 const rwProgress=$("rewriteProgress"),rwProgressFill=$("rewriteProgressFill"),rwProgressText=$("rewriteProgressText"),toastEl=$("toast");
 // 文字粘贴区相关 DOM
 const textFallbackToggle=$("textFallbackToggle"),textFallbackBody=$("textFallbackBody"),textFallbackArrow=$("textFallbackArrow"),textInput=$("textInput"),textInputCount=$("textInputCount"),textParaWarn=$("textParaWarn"),uploadTextBtn=$("uploadTextBtn");
+const textQuotaBar=$("textQuotaBar"),textQuotaLeft=$("textQuotaLeft"),textQuotaEstimate=$("textQuotaEstimate");
+const FREE_TEXT_QUOTA=10000;
+let freeTextRemaining=FREE_TEXT_QUOTA; // 从 /api/account/info 初始化
 // 文字结果弹窗相关 DOM
 const textResultModal=$("textResultModal"),textResultClose=$("textResultClose"),textResultCopyAll=$("textResultCopyAll"),textResultDownload=$("textResultDownload"),textResultStats=$("textResultStats"),textResultList=$("textResultList"),textResultEmptyTip=$("textResultEmptyTip");
 
@@ -1441,7 +1455,15 @@ textFallbackToggle.addEventListener("click",()=>{
   textFallbackArrow.classList.toggle("open",!isOpen);
 });
 
-// ── 纯文字粘贴区：实时字数/段落统计 ──
+/** 更新额度状态条显示（页面初始化和每次检测后调用） */
+function updateQuotaBar(remaining){
+  freeTextRemaining=Math.max(0,remaining);
+  textQuotaLeft.textContent=freeTextRemaining.toLocaleString();
+  const exhausted=freeTextRemaining<=0;
+  textQuotaBar.classList.toggle("exhausted",exhausted);
+}
+
+// ── 纯文字粘贴区：实时字数/段落统计 + 额度预估 ──
 textInput.addEventListener("input",()=>{
   const txt=textInput.value;
   const chars=txt.length;
@@ -1454,6 +1476,22 @@ textInput.addEventListener("input",()=>{
   const isWarn=chars>80000||paraCount>30;
   countEl.classList.toggle("warn",isWarn);
   textParaWarn.classList.toggle("show",paraCount>30);
+  // 实时显示额度预估
+  if(chars>0){
+    if(freeTextRemaining<=0){
+      textQuotaEstimate.textContent="额度已用完，请改用 .docx 文件上传（永久免费）";
+      textQuotaEstimate.classList.remove("hidden");
+    }else if(chars<=freeTextRemaining){
+      const afterDetect=freeTextRemaining-chars;
+      textQuotaEstimate.textContent=`检测后剩余 ${afterDetect.toLocaleString()} 字`;
+      textQuotaEstimate.classList.remove("hidden");
+    }else{
+      textQuotaEstimate.textContent=`超出额度 ${(chars-freeTextRemaining).toLocaleString()} 字，请减少内容或改用文件上传`;
+      textQuotaEstimate.classList.remove("hidden");
+    }
+  }else{
+    textQuotaEstimate.classList.add("hidden");
+  }
 });
 
 // ── 纯文字粘贴区：上传逻辑 ──
@@ -1482,7 +1520,20 @@ uploadTextBtn.addEventListener("click",async()=>{
     clearTimeout(timer2);clearInterval(pTimer2);
     const json=await res.json();
     uploadProgressBar.style.width="90%";
+    // 额度用尽：402 错误，引导用户改用文件上传
+    if(!json.ok&&json.error==="FREE_TEXT_QUOTA_EXCEEDED"){
+      uploadProgress.classList.remove("visible");
+      updateQuotaBar(json.freeRemaining??0);
+      showToast("文字检测免费额度已用完，请上传 .docx 文件（永久免费）","warn",6000);
+      // 高亮上传区，提示用户改用文件上传
+      dropZone.style.borderColor="var(--pri)";
+      dropZone.style.background="rgba(79,70,229,0.04)";
+      setTimeout(()=>{dropZone.style.borderColor="";dropZone.style.background="";},4000);
+      return;
+    }
     if(json.ok&&json.sessionId){
+      // 成功后更新剩余额度
+      if(typeof json.freeRemaining==="number")updateQuotaBar(json.freeRemaining);
       state.sessionId=json.sessionId;
       localStorage.setItem(lastSessionKey,json.sessionId);
       syncExportButtons(`/api/export/${encodeURIComponent(json.sessionId)}`,false);
@@ -2330,13 +2381,18 @@ function resumeJobPolling(sessionId,jobId){
 }
 
 (async function init(){
-  // 并行拉取余额和站点配置（含微信联系方式、默认免费积分）
-  const [balanceRes, configRes] = await Promise.allSettled([
+  // 并行拉取余额、站点配置、账号信息（含文字检测免费额度）
+  const [balanceRes, configRes, accountInfoRes] = await Promise.allSettled([
     fetchBalance(),
     fetch("/api/config").then(r=>r.json()),
+    fetch("/api/account/info",{headers:getHeaders()}).then(r=>r.json()),
   ]);
   if(balanceRes.status==="fulfilled"&&balanceRes.value?.ok){
     balanceEl.textContent=String(balanceRes.value.balance);
+  }
+  // 初始化文字粘贴额度显示
+  if(accountInfoRes.status==="fulfilled"&&accountInfoRes.value?.ok){
+    updateQuotaBar(accountInfoRes.value.freeTextRemaining??FREE_TEXT_QUOTA);
   }
   if(configRes.status==="fulfilled"&&configRes.value?.ok){
     const cfg=configRes.value;

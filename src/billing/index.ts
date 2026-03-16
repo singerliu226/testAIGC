@@ -1,8 +1,10 @@
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import { FileLedger } from "./fileLedger.js";
+import { FileLedger, FREE_TEXT_CHARS_QUOTA } from "./fileLedger.js";
 import { RedeemCodeStore } from "./redeemCode.js";
 import { AdminAuditLog } from "./adminAuditLog.js";
+
+export { FREE_TEXT_CHARS_QUOTA };
 
 function resolveDataDir(): string {
   const env = process.env.DATA_DIR?.trim();
@@ -56,5 +58,32 @@ export function verifyAdminSecret(secret: string): boolean {
  */
 export function listAllAccounts() {
   return ledger.listAllAccounts();
+}
+
+/**
+ * 返回账号当前余额与文字粘贴免费额度剩余量，供 GET /api/account/info 路由使用。
+ */
+export function getAccountInfo(accountId: string): {
+  balance: number;
+  freeTextRemaining: number;
+} {
+  return {
+    balance: ledger.getBalance(accountId),
+    freeTextRemaining: ledger.getFreeTextCharsRemaining(accountId),
+  };
+}
+
+/**
+ * 消耗免费文字粘贴检测额度（透传 ledger 实例方法，保持路由层依赖 index.ts 单入口）。
+ */
+export function consumeFreeTextChars(accountId: string, n: number): void {
+  ledger.consumeFreeTextChars(accountId, n);
+}
+
+/**
+ * 返回账号剩余免费文字检测字数。
+ */
+export function getFreeTextCharsRemaining(accountId: string): number {
+  return ledger.getFreeTextCharsRemaining(accountId);
 }
 
