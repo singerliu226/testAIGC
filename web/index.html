@@ -707,6 +707,8 @@ let activeFilter="medium";
 let state={sessionId:null,session:null,selected:new Set(),chatParagraphId:null,chatSending:false};
 const accountIdKey="aigc_agent_account_id";
 const accountId=(()=>{const v=localStorage.getItem(accountIdKey);if(v)return v;const id=(crypto.randomUUID?crypto.randomUUID():String(Date.now()))+"-local";localStorage.setItem(accountIdKey,id);return id})();
+/** 跨刷新保留最近一次 session，用于页面加载时自动恢复 */
+const lastSessionKey="aigc_last_session_id";
 const adminSecretKey="aigc_admin_secret";
 let adminSecret=localStorage.getItem(adminSecretKey)||"";
 function getHeaders(){const h={"Content-Type":"application/json","x-account-id":accountId};if(adminSecret)h["x-admin-secret"]=adminSecret;return h}
@@ -730,7 +732,7 @@ function log(obj){out.textContent=typeof obj==="string"?obj:JSON.stringify(obj,n
 let _exportHref="#";
 /** 同步顶部和底部两个预览/下载按钮的可见性，并保存下载链接 */
 function syncExportButtons(href,visible){
-  if(href)_exportHref=href;
+  if(href&&href!=="#"){_exportHref=href;previewDownload.href=href;}
   exportLink.classList.toggle("hidden",!visible);
   exportTop.classList.toggle("hidden",!visible);
 }
@@ -1253,6 +1255,7 @@ uploadBtn.addEventListener("click",async()=>{
     log(json);
     if(json.ok&&json.sessionId){
       state.sessionId=json.sessionId;
+      localStorage.setItem(lastSessionKey,json.sessionId);
       syncExportButtons(`/api/export/${encodeURIComponent(json.sessionId)}`,false);
       const sess=await fetchSession(json.sessionId);state.session=sess;
       uploadProgressBar.style.width="100%";
@@ -1637,7 +1640,7 @@ previewClose.addEventListener("click",()=>previewModal.classList.remove("open"))
  * 附带效果验证模块：前后分数对比、消除/注入特征、预估通过率。
  */
 function openPreview(){
-  if(!state.session)return;
+  if(!state.session){showToast("请先上传论文或从历史记录中恢复","warn",3000);return;}
   const paras=state.session.paragraphs||[];
   const revised=state.session.revised||{};
   const revisedIds=new Set(Object.keys(revised));
@@ -1731,7 +1734,7 @@ function openPreview(){
   previewModal.classList.add("open");
 }
 
-historyBody.addEventListener("click",async e=>{const t=e.target;if(!t?.dataset?.load)return;const sid=t.dataset.load;const sess=await fetchSession(sid);if(!sess.ok)return log(sess);state.sessionId=sid;state.session=sess;syncExportButtons(`/api/export/${encodeURIComponent(sid)}`,true);historyModal.classList.remove("open");render()});
+historyBody.addEventListener("click",async e=>{const t=e.target;if(!t?.dataset?.load)return;const sid=t.dataset.load;const sess=await fetchSession(sid);if(!sess.ok)return log(sess);state.sessionId=sid;state.session=sess;localStorage.setItem(lastSessionKey,sid);syncExportButtons(`/api/export/${encodeURIComponent(sid)}`,true);historyModal.classList.remove("open");render()});
 
 recheckBtn.addEventListener("click",async()=>{
   if(!state.sessionId)return;recheckBtn.disabled=true;
@@ -1992,6 +1995,33 @@ chatSuggestionsEl.addEventListener("click",e=>{
 
 // ══════ INIT ══════
 
+/**
+ * 简化版 job 轮询恢复：页面刷新后若有 running/queued 任务，
+ * 每 2s 拉取一次 session，任务结束后刷新视图。
+ * 不复用完整进度 UI，只保证数据最终一致。
+ */
+function resumeJobPolling(sessionId,jobId){
+  if(!sessionId||!jobId)return;
+  const t=setInterval(async()=>{
+    try{
+      const res=await fetch(`/api/rewrite-to-target/${encodeURIComponent(sessionId)}/status/${encodeURIComponent(jobId)}`,{headers:getHeaders()});
+      const json=await res.json();
+      if(!json.ok){clearInterval(t);return;}
+      const job=json.job;
+      const p=job.progress||{};
+      const overall=typeof p.overallCurrent==="number"?p.overallCurrent:null;
+      if(overall!==null)verdictDesc.textContent=`自动降分进行中：当前AI率约 ${Math.round(overall)}%（后台运行中）`;
+      if(job.status==="completed"||job.status==="failed"||job.status==="cancelled"){
+        clearInterval(t);
+        const sess=await fetchSession(sessionId);
+        if(sess&&sess.ok!==false){state.session=sess;render();}
+        if(job.status==="completed")showToast("自动降分完成（刷新前启动的任务）","ok",5000);
+        else if(job.status==="failed")showToast("自动降分失败（刷新前启动的任务）","err",5000);
+      }
+    }catch(e){clearInterval(t);}
+  },2000);
+}
+
 (async function init(){
   // 并行拉取余额和站点配置（含微信联系方式、默认免费积分）
   const [balanceRes, configRes] = await Promise.allSettled([
@@ -2016,6 +2046,34 @@ chatSuggestionsEl.addEventListener("click",e=>{
       const show=pts>0;
       freeWrap.style.display=show?"inline":"none";
       freeSep.style.display=show?"inline":"none";
+    }
+  }
+
+  // 尝试恢复上次 session（accountId 持久化于 localStorage，session 数据落盘于 DiskStore）
+  const lastSid=localStorage.getItem(lastSessionKey);
+  if(lastSid){
+    try{
+      const sess=await fetchSession(lastSid);
+      if(sess&&sess.ok!==false){
+        state.sessionId=lastSid;
+        state.session=sess;
+        const hasRevised=Boolean(sess.revised&&Object.keys(sess.revised).length);
+        syncExportButtons(`/api/export/${encodeURIComponent(lastSid)}`,hasRevised);
+        const rb=sess.reportBefore;
+        const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
+        state.selected=new Set(riskyIds);
+        activeFilter=riskyIds.length>0?"medium":"all";
+        render();
+        // 若有未完成的改写任务，恢复轮询
+        const job=sess.autoRewriteJob;
+        if(job&&(job.status==="running"||job.status==="queued")){
+          resumeJobPolling(lastSid,job.jobId);
+        }
+      }else{
+        localStorage.removeItem(lastSessionKey);
+      }
+    }catch(e){
+      localStorage.removeItem(lastSessionKey);
     }
   }
 })();
