@@ -223,6 +223,7 @@ export function registerAdminRoutes(params: { router: Router; store: SessionStor
         .filter((s) => s.autoRewriteJob?.status === "running")
         .map((s) => ({
           sessionId: s.sessionId,
+          jobId: s.autoRewriteJob?.jobId ?? null,
           accountIdShort: s.accountId.slice(0, 8) + "…",
           filename: s.filename,
           jobProgress: s.autoRewriteJob?.progress ?? null,
@@ -312,6 +313,45 @@ export function registerAdminRoutes(params: { router: Router; store: SessionStor
           snapshotAt: now,
         },
       });
+    })
+  );
+
+  /**
+   * 管理员强制取消某个正在运行的改写任务。
+   *
+   * 设计原因：
+   * - 普通用户取消接口需要 sessionId + jobId，管理员只需要 sessionId 即可强制停止；
+   * - 用于处理长时间卡住（如 Zeabur 反向代理拦截 AbortController 信号）的任务。
+   */
+  router.post(
+    "/admin/cancel-job/:sessionId",
+    adminActionLimiter,
+    asyncHandler(async (req, res) => {
+      if (!isAdminRequest(req.header("x-admin-secret"))) {
+        throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
+      }
+      const sessionId = String(req.params.sessionId);
+      const session = params.store.get(sessionId);
+      if (!session) {
+        throw new HttpError(404, "NOT_FOUND", `Session 不存在: ${sessionId}`);
+      }
+      const job = session.autoRewriteJob;
+      if (!job || job.status !== "running") {
+        res.json({ ok: false, message: `该 session 没有正在运行的任务（当前状态: ${job?.status ?? "无任务"}）` });
+        return;
+      }
+      params.store.update(sessionId, {
+        autoRewriteJob: {
+          ...job,
+          status: "cancelled",
+          updatedAt: Date.now(),
+          finishedAt: Date.now(),
+          progress: { ...job.progress, lastMessage: "管理员强制结束" },
+        },
+      });
+      params.store.get(sessionId); // no-op, just for context
+      console.warn("[admin] force-cancelled job", { sessionId, jobId: job.jobId });
+      res.json({ ok: true, sessionId, jobId: job.jobId, message: "任务已强制结束" });
     })
   );
 }

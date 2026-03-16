@@ -60,7 +60,20 @@ export function registerUploadRoutes(params: {
         size: file.size,
       });
 
-      const parsed = await parseDocx(file.buffer);
+      let parsed: Awaited<ReturnType<typeof parseDocx>>;
+      try {
+        parsed = await parseDocx(file.buffer);
+      } catch (parseErr) {
+        // 解析失败：记录详细错误，便于从 Zeabur 日志排查具体原因
+        log.error("Docx parse failed", {
+          sessionId: session.sessionId,
+          filename: session.filename,
+          fileSizeKB: Math.round(file.size / 1024),
+          error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+          stack: parseErr instanceof Error ? parseErr.stack?.slice(0, 500) : undefined,
+        });
+        throw new HttpError(422, "PARSE_FAILED", `文件解析失败，请确认文件为标准 .docx 格式：${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
+      }
       const t1 = Date.now();
 
       const paragraphs = parsed.paragraphs.map((p) => ({
@@ -93,6 +106,7 @@ export function registerUploadRoutes(params: {
       const t3 = Date.now();
 
       // 分阶段计时日志：帮助定位大文件上传的性能瓶颈
+      const emptyTextParas = paragraphs.filter((p) => p.kind === "paragraph" && !p.text.trim()).length;
       log.info("Docx upload pipeline timing", {
         sessionId: session.sessionId,
         fileSizeKB: Math.round(file.size / 1024),
@@ -103,6 +117,9 @@ export function registerUploadRoutes(params: {
         paragraphCount: parsed.paragraphs.length,
         imageParagraphs: paragraphs.filter((p) => p.kind === "imageParagraph").length,
         textParagraphs: paragraphs.filter((p) => p.kind === "paragraph").length,
+        // 若 emptyTextParas > 0，说明文本提取异常（可能需要扩充 shieldNestedBlocks 标签）
+        emptyTextParas,
+        overallRiskScore: reportBefore.overallRiskScore,
       });
 
       res.json({

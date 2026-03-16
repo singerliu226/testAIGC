@@ -134,6 +134,13 @@ function shieldNestedBlocks(xml: string): { xml: string; map: string[] } {
     "wps:txbx",           // 文本框（含嵌套 <w:p>）
     "w:txbxContent",      // 文本框内容（含嵌套 <w:p>）
     "v:textbox",          // VML 文本框（含嵌套 <w:p>）
+    /**
+     * <w:sdt> 是 OOXML 的"结构化文档标记"，学术论文中极为常见：
+     * 目录（TOC）、摘要字段、页码、自动标题等均以 <w:sdt> 包裹。
+     * <w:sdt> 内部的 <w:sdtContent> 包含嵌套 <w:p>，若不屏蔽会导致
+     * 正则匹配的 <w:p> 边界错位，进而使段落提取结果偏差甚至产生空段落。
+     */
+    "w:sdt",              // 结构化文档标记（目录/摘要字段/页码等）
   ];
 
   let current = xml;

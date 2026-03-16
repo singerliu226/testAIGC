@@ -651,6 +651,29 @@ function fmtTime(ts){
   return new Date(ts).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
 }
 
+// ── 管理员强制结束改写任务 ──
+async function adminCancelJob(sessionId, btn){
+  if(!confirm(`确定要强制结束 session ${sessionId.slice(0,8)}… 的改写任务吗？`))return;
+  btn.disabled=true;btn.textContent="处理中…";
+  try{
+    const res=await fetch(`/api/admin/cancel-job/${encodeURIComponent(sessionId)}`,{
+      method:"POST",headers:adminHeaders()
+    });
+    const json=await res.json();
+    if(json.ok){
+      showToast("任务已强制结束，看板将在下次刷新时更新","ok",3000);
+      btn.closest(".job-card").style.opacity="0.4";
+      btn.textContent="已结束";
+    }else{
+      showToast(json.message||"操作失败","warn",3000);
+      btn.disabled=false;btn.textContent="⛔ 强制结束";
+    }
+  }catch(e){
+    showToast("请求失败："+e,"err",3000);
+    btn.disabled=false;btn.textContent="⛔ 强制结束";
+  }
+}
+
 // ── 活跃看板 ──
 async function loadActivity(){
   try{
@@ -714,6 +737,9 @@ async function loadActivity(){
             ${curScore?`<span>${curScore}</span>`:""}
             <span style="color:var(--g400)">账号 ${esc(j.accountIdShort)}</span>
           </div>
+          ${j.sessionId?`<div style="margin-top:6px;display:flex;justify-content:flex-end">
+            <button onclick="adminCancelJob('${j.sessionId}', this)" style="font-size:11px;padding:3px 10px;border:1px solid var(--err);border-radius:4px;background:white;color:var(--err);cursor:pointer;transition:.15s" onmouseover="this.style.background='var(--err)';this.style.color='white'" onmouseout="this.style.background='white';this.style.color='var(--err)'">⛔ 强制结束</button>
+          </div>`:""}
         </div>`;
       }).join("");
     }
