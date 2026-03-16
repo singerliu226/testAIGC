@@ -21,28 +21,124 @@ export type DocumentXmlParts =
   | { type: "paragraph"; paragraph: DocxParagraph };
 
 /**
+ * 用手动栈扫描（计数器法）屏蔽指定标签的所有顶层块，替换为编号占位符。
+ *
+ * 设计原因：
+ * - 正则 `/<tag\b[\s\S]*?<\/tag>/g` 对于可能嵌套同名标签的结构（如 `mc:AlternateContent`
+ *   嵌套 `mc:AlternateContent`）会产生灾难性回溯，在体积较大的 XML 中耗时可达数十秒。
+ * - `indexOf` 线性扫描配合深度计数器，时间复杂度严格 O(n)，彻底消除回溯风险。
+ *
+ * 实现方式：
+ * - 找到开标签 `<tagName` 后，用 depth 计数器追踪嵌套深度，直到匹配的闭标签 `</tagName>`。
+ * - 每个顶层块整体推入 `map`，原位写入 `\x00SHIELD{i}\x00`。
+ * - 遇到格式错误（找不到闭标签）时原样保留，不会崩溃。
+ */
+function shieldTagBlocks(xml: string, tagName: string, map: string[]): string {
+  const openTag = `<${tagName}`;
+  const closeTag = `</${tagName}>`;
+  let result = "";
+  let pos = 0;
+
+  while (pos < xml.length) {
+    const openIdx = xml.indexOf(openTag, pos);
+    if (openIdx === -1) {
+      result += xml.slice(pos);
+      break;
+    }
+
+    // openTag 后必须紧跟空白或 `>`，防止误匹配前缀相同的标签（如 <mc:AlternateContentX）
+    const afterOpen = xml[openIdx + openTag.length];
+    if (afterOpen !== " " && afterOpen !== "\t" && afterOpen !== "\n" && afterOpen !== "\r" && afterOpen !== ">" && afterOpen !== "/") {
+      result += xml.slice(pos, openIdx + openTag.length);
+      pos = openIdx + openTag.length;
+      continue;
+    }
+
+    result += xml.slice(pos, openIdx);
+
+    // 从 openIdx 开始，用计数器找到匹配的闭标签
+    let depth = 0;
+    let scanPos = openIdx;
+    let found = false;
+
+    while (scanPos < xml.length) {
+      const nextOpen = xml.indexOf(openTag, scanPos);
+      const nextClose = xml.indexOf(closeTag, scanPos);
+
+      if (nextClose === -1) break; // 格式错误，放弃
+
+      if (nextOpen !== -1 && nextOpen < nextClose) {
+        // 确认是同名标签的开标签（非前缀匹配）
+        const ch = xml[nextOpen + openTag.length];
+        if (ch === " " || ch === "\t" || ch === "\n" || ch === "\r" || ch === ">" || ch === "/") {
+          depth++;
+          scanPos = nextOpen + openTag.length;
+        } else {
+          scanPos = nextOpen + openTag.length;
+        }
+      } else {
+        if (depth === 0) {
+          const endIdx = nextClose + closeTag.length;
+          const block = xml.slice(openIdx, endIdx);
+          const idx = map.length;
+          map.push(block);
+          result += `\x00SHIELD${idx}\x00`;
+          pos = endIdx;
+          found = true;
+          break;
+        }
+        depth--;
+        scanPos = nextClose + closeTag.length;
+      }
+    }
+
+    if (!found) {
+      // 格式异常，保留原样继续
+      result += xml.slice(openIdx, openIdx + openTag.length);
+      pos = openIdx + openTag.length;
+    }
+  }
+
+  return result;
+}
+
+/**
  * 屏蔽 XML 中包含嵌套 `<w:p>` 的容器结构，替换为编号占位符。
  *
  * 设计原因：
- * - OOXML 中 `<wps:txbx>`、`<v:textbox>`、`<w:txbxContent>`、`<mc:AlternateContent>` 等结构内部
- *   可能包含嵌套的 `<w:p>`，会干扰外层段落正则的配对逻辑。
- * - 屏蔽后，段落正则只看到"干净"的顶层 `<w:p>`，不再有嵌套干扰。
+ * - OOXML 多图论文中，每张图片通常对应一个 `<mc:AlternateContent>` 包装，
+ *   内部含 `<mc:Choice>/<w:drawing>` 和 `<mc:Fallback>/<v:pict>` 两条支路，
+ *   单块 XML 体积可达数万字符；`<v:shape>`、`<v:pict>` 等 VML 回退格式同样庞大。
+ * - 原来使用正则 `[\s\S]*?<\/\1>` 对这些大型块做懒惰匹配，在嵌套同名标签时
+ *   会触发灾难性回溯，导致 50 张图的论文解析耗时超过 50 秒。
+ * - 改为 `shieldTagBlocks`（栈扫描，O(n)）后彻底消除回溯风险。
  *
- * 实现方式：
- * - 按特定标签名做贪婪替换，将每个匹配块存入 `map` 数组，原位置写入 `\x00SHIELD{i}\x00`。
- * - 支持同名标签的嵌套（使用 JS replace 的全局贪婪特性）。
+ * 屏蔽顺序：
+ * 1. `<w:drawing>`：DrawingML 主体，最先屏蔽后可大幅缩减后续标签需扫描的字符量。
+ * 2. `<mc:AlternateContent>`：图片的 Word 兼容容器，每张图对应一个，体积大且可嵌套。
+ * 3. `<v:shape>`、`<v:pict>`：VML 回退格式（`mc:Fallback` 里），体积同样很大。
+ * 4. `<wps:txbx>`、`<w:txbxContent>`、`<v:textbox>`：文本框，含内层 `<w:p>`。
  */
 function shieldNestedBlocks(xml: string): { xml: string; map: string[] } {
   const map: string[] = [];
-  // 需要屏蔽的容器标签（可能包含内层 <w:p>）
-  const containerRe =
-    /<(wps:txbx|v:textbox|w:txbxContent|mc:AlternateContent)\b[\s\S]*?<\/\1>/g;
-  const shielded = xml.replace(containerRe, (match) => {
-    const idx = map.length;
-    map.push(match);
-    return `\x00SHIELD${idx}\x00`;
-  });
-  return { xml: shielded, map };
+
+  // 按顺序逐标签屏蔽，顺序很重要：先屏蔽内层，再屏蔽外层，每轮扫描量依次缩减
+  const tagsToShield = [
+    "w:drawing",          // DrawingML 主体（最大、最先）
+    "mc:AlternateContent", // 图片兼容容器（每张图一个）
+    "v:shape",            // VML 图形回退
+    "v:pict",             // VML 图片回退
+    "wps:txbx",           // 文本框（含嵌套 <w:p>）
+    "w:txbxContent",      // 文本框内容（含嵌套 <w:p>）
+    "v:textbox",          // VML 文本框（含嵌套 <w:p>）
+  ];
+
+  let current = xml;
+  for (const tag of tagsToShield) {
+    current = shieldTagBlocks(current, tag, map);
+  }
+
+  return { xml: current, map };
 }
 
 /**

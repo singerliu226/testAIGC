@@ -1239,12 +1239,20 @@ uploadBtn.addEventListener("click",async()=>{
   state={sessionId:null,session:null,selected:new Set(),chatParagraphId:null,chatSending:false};
   uploadProgress.classList.add("visible");uploadProgressBar.style.width="10%";
   dropTitle.textContent="正在解析文档并检测 AI 痕迹…";
-  dropHint.textContent="大型论文（5万字以上）可能需要 1~2 分钟，请耐心等待";
+  // 根据文件体积动态给出等待预期，文件越大（图片越多）解析越慢
+  const fMB=f.size/1024/1024;
+  let hintText,progressInterval;
+  if(fMB<1){hintText="";progressInterval=1000;}
+  else if(fMB<5){hintText="约需 10–30 秒，请稍候";progressInterval=1200;}
+  else if(fMB<15){hintText="文档含大量图片，约需 30–60 秒，请耐心等待";progressInterval=2000;}
+  else{hintText="文档体积较大（含大量图片），约需 1–2 分钟，请耐心等待";progressInterval=3000;}
+  dropHint.textContent=hintText;
   try{
     const fd=new FormData();fd.append("file",f);
     const ctrl=new AbortController();
     const timer=setTimeout(()=>ctrl.abort(),300000);
-    let pct=10;const pTimer=setInterval(()=>{pct=Math.min(pct+2,85);uploadProgressBar.style.width=pct+"%"},1500);
+    // 进度推进速率根据文件大小动态调整，避免大文件时进度条长期卡在 85%
+    let pct=10;const pTimer=setInterval(()=>{pct=Math.min(pct+2,85);uploadProgressBar.style.width=pct+"%"},progressInterval);
     // 上传时需传入 x-account-id（不可用 getHeaders()，会覆盖 FormData 的 multipart Content-Type）
     const uploadHeaders={"x-account-id":accountId};
     if(adminSecret)uploadHeaders["x-admin-secret"]=adminSecret;

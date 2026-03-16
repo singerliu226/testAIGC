@@ -36,6 +36,7 @@ data/redeem-codes.json
 data/admin-audit.json
 
 # Generated marketing assets (local only)
+.worktrees/
 xhs_*.png
 *.docx
 测试报告*.md
