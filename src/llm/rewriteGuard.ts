@@ -88,6 +88,18 @@ export function validateRewriteGuard(params: RewriteGuardParams): RewriteGuardRe
     });
   }
 
+  // 5) 英文亲历宣称（英文论文专项）
+  // 设计原因：中文护栏的关键词（笔者/调研等）不能覆盖英文，需要专门检查英文 fieldwork 声明
+  const enProcOrig = new Set(extractEnglishProcessClaims(original));
+  const enProcRev = unique(extractEnglishProcessClaims(revised));
+  const newEnProc = enProcRev.filter((x) => !enProcOrig.has(x));
+  if (newEnProc.length) {
+    violations.push({
+      ruleId: "new_en_research_claims",
+      evidence: `New first-person fieldwork claims added: ${newEnProc.slice(0, 5).join("; ")}`,
+    });
+  }
+
   return violations.length ? { ok: false, violations } : { ok: true };
 }
 
@@ -217,6 +229,34 @@ function extractOrgLike(s: string): string[] {
    */
   const re = /[\u4e00-\u9fff]{2,10}(?:大学|学院|研究院|研究所|公司|集团|委员会|协会|中心)/g;
   return (s.match(re) ?? []).filter((m) => !GENERIC_ORG_WHITELIST.has(m));
+}
+
+/**
+ * 英文论文亲历调研声明检测。
+ *
+ * 设计原因：
+ * - 英文论文改写时模型可能添加 "I conducted a survey" / "I interviewed" 等第一人称亲历声明；
+ * - 中文护栏无法覆盖英文，需要专项检测；
+ * - 只检测"具体调研行为"的组合，不拦截合法的 "I argue" / "I suggest" 等学术意见表达。
+ */
+function extractEnglishProcessClaims(s: string): string[] {
+  const hits: string[] = [];
+
+  // 第一人称 + 调研/观察动作 组合（精确匹配避免误报）
+  const patterns = [
+    /\bI\s+conducted\s+(?:a\s+)?(?:survey|interview|questionnaire|experiment|field\s*work|study|research)\b/gi,
+    /\bI\s+(?:interviewed|surveyed|observed|collected\s+data|distributed\s+questionnaires?)\b/gi,
+    /\bwe\s+conducted\s+(?:a\s+)?(?:survey|interview|field\s*work|experiment)\b/gi,
+    /\bfield(?:\s*work|\s*research|\s*study)\s+(?:was\s+)?conducted\s+by\s+(?:me|us|the\s+author)\b/gi,
+    /\bI\s+visited\b(?:.{0,30})\b(?:school|university|company|factory|site)\b/gi,
+  ];
+
+  for (const re of patterns) {
+    const m = s.match(re);
+    if (m) hits.push(...m.map((v) => v.trim().slice(0, 60)));
+  }
+
+  return hits;
 }
 
 function extractProcessClaims(s: string): string[] {

@@ -4,6 +4,32 @@ export function normalizeText(input: string): string {
   return input.replace(/\r\n/g, "\n").replace(/[ \t]+/g, " ").trim();
 }
 
+/**
+ * 判断文本主体语言：统计非空白字符中 ASCII 字母占比。
+ *
+ * 设计原因：
+ * - 同一逻辑原散落在 prompts.ts 的 buildRewriteMessages 内，属于内联函数，无法复用；
+ * - 提取为公共工具后，detectAigcRiskAsync 与 rewriteGuard 均可直接调用，保持判断口径一致。
+ * - 阈值 0.55：正文为英文的学术论文（含少量数字/标点）通常 >0.7，中文论文通常 <0.2，混合摘要约 0.4-0.6。
+ */
+export function detectTextLanguage(text: string): "zh" | "en" {
+  const nonSpace = text.replace(/\s/g, "");
+  if (!nonSpace) return "zh";
+  const asciiLetters = (nonSpace.match(/[A-Za-z]/g) ?? []).length;
+  return asciiLetters / nonSpace.length > 0.55 ? "en" : "zh";
+}
+
+/**
+ * 判断一批段落的文档主体语言。
+ *
+ * 设计原因：
+ * - 单段可能因标题/页眉误判语言，用所有段落的合并文本来判断更稳定。
+ */
+export function detectDocumentLanguage(paragraphs: Array<{ text: string }>): "zh" | "en" {
+  const combined = paragraphs.map((p) => p.text).join(" ");
+  return detectTextLanguage(combined);
+}
+
 export function splitSentences(input: string): string[] {
   const text = normalizeText(input);
   if (!text) return [];

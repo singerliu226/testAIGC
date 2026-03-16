@@ -1587,10 +1587,18 @@ uploadBtn.addEventListener("click",async()=>{
       state.selected=new Set(riskyIds);
       activeFilter=riskyIds.length>0?"medium":"all";
       render();
-      // LLM 复核在后台进行，轮询刷新结果
+      // LLM 复核/英文检测在后台进行，轮询刷新结果
       if(json.judgeStatus==="pending"){
-        showToast("规则检测完成，AI 复核正在后台进行中…","ok",4000);
-        let polls=0;const maxPolls=12;
+        const isEn=json.isEnglish===true;
+        // 英文检测需 5-10 分钟（180次×5s=15分钟），中文复核约 60s（12次×5s）
+        const maxPolls=isEn?180:12;
+        const pollIntervalMs=isEn?5000:5000;
+        if(isEn){
+          showToast("英文论文检测已启动，正在逐段分析 AI 内容（约需 5-10 分钟），完成后自动更新结果…","ok",8000);
+        }else{
+          showToast("规则检测完成，AI 复核正在后台进行中…","ok",4000);
+        }
+        let polls=0;
         const pollTimer=setInterval(async()=>{
           polls++;
           try{
@@ -1599,18 +1607,22 @@ uploadBtn.addEventListener("click",async()=>{
             const oldScore=state.session?.reportBefore?.overallRiskScore;
             const newScore=s2.reportBefore?.overallRiskScore;
             state.session=s2;
-            if(newScore!==oldScore){
+            // 检测到分数从 0（占位）变为实际值，或中文复核完成
+            if(newScore!==oldScore&&!(newScore===0&&oldScore===0)){
               const rb2=s2.reportBefore;
               const ids2=(rb2?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
               state.selected=new Set(ids2);
+              activeFilter=ids2.length>0?"medium":"all";
               render();
-              showToast("AI 复核完成，结果已更新","ok",3000);
+              const msg=isEn?"英文 AI 检测完成，结果已更新":"AI 复核完成，结果已更新";
+              showToast(msg,"ok",4000);
               clearInterval(pollTimer);
             }else if(polls>=maxPolls){
+              if(isEn)showToast("英文检测超时，当前显示为初步结果，可稍后刷新页面查看完整检测","warn",5000);
               clearInterval(pollTimer);
             }
           }catch(e){clearInterval(pollTimer)}
-        },5000);
+        },pollIntervalMs);
       }
     }
   }catch(e){
@@ -1623,7 +1635,7 @@ uploadBtn.addEventListener("click",async()=>{
     uploadProgress.classList.remove("visible");
   }finally{
     uploadBtn.disabled=false;
-    dropTitle.textContent="拖拽或点击上传 .docx 文件";
+    dropTitle.textContent="拖拽或点击上传 .docx 文件（支持 .doc）";
     dropHint.textContent="支持论文、开题报告、答辩稿等 Word 文档，最大 20MB";
     dropZone.style.borderColor="";dropZone.style.background="";
   }
@@ -1753,7 +1765,7 @@ uploadTextBtn.addEventListener("click",async()=>{
             const oldScore=state.session?.reportBefore?.overallRiskScore;
             const newScore=s2.reportBefore?.overallRiskScore;
             state.session=s2;
-            if(newScore!==oldScore){
+            if(newScore!==oldScore&&!(newScore===0&&oldScore===0)){
               const rb2=s2.reportBefore;
               const ids2=(rb2?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
               state.selected=new Set(ids2);

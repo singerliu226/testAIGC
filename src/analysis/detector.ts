@@ -1,7 +1,10 @@
+import type OpenAI from "openai";
+import type { AppLogger } from "../logger/index.js";
 import type { DocxParagraph } from "../docx/documentXml.js";
 import type { DocumentReport, FindingSignal, ParagraphReport, RiskLevel } from "../report/schema.js";
 import { extractFeatures } from "./features.js";
-import { clamp, tokenizeZh, unique } from "./textUtils.js";
+import { clamp, detectDocumentLanguage, tokenizeZh, unique } from "./textUtils.js";
+import { detectEnglishDocument } from "./detectEnglish.js";
 
 function riskLevel(score: number): RiskLevel {
   if (score >= 70) return "high";
@@ -470,4 +473,33 @@ export function detectAigcRisk(paragraphs: Array<Pick<DocxParagraph, "id" | "ind
       "本工具不会联网核验事实与引用真伪；请对关键结论、数据与引用来源做人工复核。",
     ],
   };
+}
+
+/**
+ * 异步版文档 AI 风险检测：自动检测语言，英文走 LLM 路径，中文走原有规则引擎。
+ *
+ * 设计原因：
+ * - 原 detectAigcRisk 是同步函数，英文 LLM 检测需要 async；
+ * - 保持原函数不变，避免影响中文检测路径（jobRunner / rewriteOneInternal 中的检测调用）；
+ * - 调用方只需替换 detectAigcRisk → detectAigcRiskAsync，语言路由完全透明。
+ *
+ * @param paragraphs - 文档段落
+ * @param deps - 可选的 LLM 依赖（中文路径不需要，英文路径必须提供）
+ */
+export async function detectAigcRiskAsync(
+  paragraphs: Array<Pick<DocxParagraph, "id" | "index" | "kind" | "text">>,
+  deps?: { llmClient: OpenAI; model: string; logger: AppLogger }
+): Promise<DocumentReport> {
+  const lang = detectDocumentLanguage(paragraphs);
+
+  if (lang === "en") {
+    if (!deps?.llmClient) {
+      // 没有提供 LLM 客户端时降级到规则引擎（会有大量信号失效，但不崩溃）
+      return detectAigcRisk(paragraphs);
+    }
+    return detectEnglishDocument(paragraphs, deps);
+  }
+
+  // 中文：使用原有同步规则引擎
+  return detectAigcRisk(paragraphs);
 }

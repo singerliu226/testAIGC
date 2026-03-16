@@ -3,9 +3,15 @@ import type { AppLogger } from "../../../logger/index.js";
 import type { SessionStore } from "../../sessionStore.js";
 import type multer from "multer";
 import { z } from "zod";
+import { execFile } from "node:child_process";
+import { promisify } from "node:util";
+import { writeFile, readFile, unlink } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import { join } from "node:path";
 import { parseDocx } from "../../../docx/parser.js";
 import { textToDocx } from "../../../docx/textToDocx.js";
-import { detectAigcRisk } from "../../../analysis/detector.js";
+import { detectAigcRisk, detectAigcRiskAsync } from "../../../analysis/detector.js";
+import { createDashscopeClient, loadDashscopeConfigFromEnv } from "../../../llm/client.js";
 import { judgeParagraphWithDashscope } from "../../../llm/judge.js";
 import { asyncHandler } from "../asyncHandler.js";
 import { uploadLimiter } from "../../rateLimit.js";
@@ -20,6 +26,36 @@ import {
 } from "../../../billing/index.js";
 import { estimatePointsByChars } from "../../../billing/pricing.js";
 import { randomUUID } from "node:crypto";
+
+const execFileAsync = promisify(execFile);
+
+/**
+ * 将 .doc（旧版 OLE2 二进制格式）转换为 .docx buffer。
+ *
+ * 设计原因：
+ * - 系统核心依赖 jszip 解析 .docx（zip-based XML），无法直接解析 .doc 二进制格式；
+ * - macOS 内置 textutil 可以无损转换 .doc → .docx，无需额外安装依赖；
+ * - 转换使用临时文件，转换完成后立即清理，不落盘持久化。
+ */
+async function convertDocToDocx(buffer: Buffer, logger: AppLogger): Promise<Buffer> {
+  const tmpId = randomUUID();
+  const inPath = join(tmpdir(), `${tmpId}.doc`);
+  const outPath = join(tmpdir(), `${tmpId}.docx`);
+
+  try {
+    await writeFile(inPath, buffer);
+    await execFileAsync("textutil", ["-convert", "docx", inPath, "-output", outPath]);
+    const docxBuffer = await readFile(outPath);
+    logger.info("Converted .doc to .docx via textutil", {
+      inputSizeKB: Math.round(buffer.length / 1024),
+      outputSizeKB: Math.round(docxBuffer.length / 1024),
+    });
+    return docxBuffer;
+  } finally {
+    await unlink(inPath).catch(() => {});
+    await unlink(outPath).catch(() => {});
+  }
+}
 
 export function registerUploadRoutes(params: {
   router: Router;
@@ -39,36 +75,52 @@ export function registerUploadRoutes(params: {
       if (!file) throw new HttpError(400, "NO_FILE", "请上传 .docx 文件（字段名：file）");
 
       const decodedFilename = decodeMulterFilename(file.originalname);
-      if (!decodedFilename.toLowerCase().endsWith(".docx")) {
-        throw new HttpError(400, "INVALID_FILE", "目前仅支持 .docx");
+      const lowerFilename = decodedFilename.toLowerCase();
+      if (!lowerFilename.endsWith(".docx") && !lowerFilename.endsWith(".doc")) {
+        throw new HttpError(400, "INVALID_FILE", "目前支持 .docx 和 .doc 格式");
       }
 
       // 读取并确保账号存在（创建会话时绑定 accountId，实现用户间数据隔离）
       const accountId = getAccountIdFromRequestHeader(req.header("x-account-id"));
       ledger.ensureAccount(accountId, getDefaultFreePoints());
 
+      // .doc 文件自动转换为 .docx（仅 macOS 支持，依赖系统自带 textutil）
+      let docxBuffer = file.buffer;
+      if (lowerFilename.endsWith(".doc")) {
+        try {
+          docxBuffer = await convertDocToDocx(file.buffer, log);
+        } catch (convErr) {
+          log.error(".doc conversion failed", {
+            filename: decodedFilename,
+            error: convErr instanceof Error ? convErr.message : String(convErr),
+          });
+          throw new HttpError(422, "DOC_CONVERT_FAILED", ".doc 文件转换失败，请另存为 .docx 后重新上传");
+        }
+      }
+
       const session = params.store.create({
         filename: decodedFilename,
-        originalDocx: file.buffer,
+        originalDocx: docxBuffer,
         accountId,
       });
 
       const t0 = Date.now();
-      log.info("Uploaded docx", {
+      log.info("Uploaded file", {
         sessionId: session.sessionId,
         filename: session.filename,
-        size: file.size,
+        originalSize: file.size,
+        docxSize: docxBuffer.length,
       });
 
       let parsed: Awaited<ReturnType<typeof parseDocx>>;
       try {
-        parsed = await parseDocx(file.buffer);
+        parsed = await parseDocx(docxBuffer);
       } catch (parseErr) {
         // 解析失败：记录详细错误，便于从 Zeabur 日志排查具体原因
         log.error("Docx parse failed", {
           sessionId: session.sessionId,
           filename: session.filename,
-          fileSizeKB: Math.round(file.size / 1024),
+          fileSizeKB: Math.round(docxBuffer.length / 1024),
           error: parseErr instanceof Error ? parseErr.message : String(parseErr),
           stack: parseErr instanceof Error ? parseErr.stack?.slice(0, 500) : undefined,
         });
@@ -83,10 +135,38 @@ export function registerUploadRoutes(params: {
         kind: p.kind,
       }));
 
+      // 检测文档语言：英文走 LLM 主判断路径（后台异步），中文走规则引擎（同步快速返回）
+      const { detectDocumentLanguage: detectLang } = await import(
+        "../../../analysis/textUtils.js"
+      );
+      const docLang = detectLang(paragraphs);
+      const isEnglish = docLang === "en";
+
+      // 准备 LLM 依赖（英文 LLM 检测 + 中文 LLM 复核均需要）
+      let llmDeps: Parameters<typeof detectAigcRiskAsync>[1] | undefined;
+      try {
+        const llmCfg = loadDashscopeConfigFromEnv();
+        llmDeps = {
+          llmClient: createDashscopeClient(llmCfg),
+          model: llmCfg.model,
+          logger: log,
+        };
+      } catch {
+        log.warn("LLM config unavailable, falling back to rule-based detection");
+      }
+
+      /**
+       * 同步检测（始终执行）：
+       * - 中文：规则引擎，毫秒级，直接用于首屏展示；
+       * - 英文：同样先跑规则引擎拿到结构信息（分数近似 0），作为占位 report 立即返回；
+       *   然后在后台用 LLM 重新检测并覆盖 reportBefore（前端通过轮询获取最终结果）。
+       *
+       * 设计原因：英文 LLM 检测对 40 页论文需要 5-10 分钟，同步等待会超出 HTTP 超时限制；
+       * 采用"快速占位 + 后台更新"模式，与现有 LLM 复核（judgeStatus="pending"）架构完全一致。
+       */
       const reportBefore = detectAigcRisk(paragraphs);
       const t2 = Date.now();
 
-      // 先保存规则检测结果并立即返回（避免 Zeabur 等平台的 HTTP 超时）
       const storedParas = parsed.paragraphs.map((p) => ({
         id: p.id,
         index: p.index,
@@ -105,7 +185,6 @@ export function registerUploadRoutes(params: {
       });
       const t3 = Date.now();
 
-      // 分阶段计时日志：帮助定位大文件上传的性能瓶颈
       const emptyTextParas = paragraphs.filter((p) => p.kind === "paragraph" && !p.text.trim()).length;
       log.info("Docx upload pipeline timing", {
         sessionId: session.sessionId,
@@ -117,9 +196,9 @@ export function registerUploadRoutes(params: {
         paragraphCount: parsed.paragraphs.length,
         imageParagraphs: paragraphs.filter((p) => p.kind === "imageParagraph").length,
         textParagraphs: paragraphs.filter((p) => p.kind === "paragraph").length,
-        // 若 emptyTextParas > 0，说明文本提取异常（可能需要扩充 shieldNestedBlocks 标签）
         emptyTextParas,
         overallRiskScore: reportBefore.overallRiskScore,
+        docLang,
       });
 
       res.json({
@@ -128,87 +207,129 @@ export function registerUploadRoutes(params: {
         paragraphCount: parsed.paragraphs.length,
         report: reportBefore,
         judgeStatus: "pending",
-        message: "规则检测完成，LLM 复核正在后台进行中…",
+        isEnglish,
+        message: isEnglish
+          ? "文件解析完成，正在进行英文 AI 内容分析（约需 5-10 分钟），请稍候…"
+          : "规则检测完成，LLM 复核正在后台进行中…",
       });
 
-      // ── LLM 复核在后台异步执行，不阻塞 HTTP 响应 ──
-      const MAX_JUDGE = 30;
-      const candidatesForJudge = reportBefore.paragraphReports
-        .filter((r) => r.riskScore >= 50)
-        .sort((a, b) => b.riskScore - a.riskScore)
-        .slice(0, MAX_JUDGE);
+      // ── 后台异步 LLM 处理，不阻塞 HTTP 响应 ──
+      if (process.env.DASHSCOPE_API_KEY && llmDeps) {
+        if (isEnglish) {
+          /**
+           * 英文路径：后台运行完整 LLM 检测（5-10 分钟），完成后替换 reportBefore。
+           *
+           * 设计原因：
+           * - 英文规则引擎对英文文本输出近似 0 分（中文 NLP 词典无效），仅作占位；
+           * - 必须在后台运行全量 LLM 检测；前端通过轮询 judgeStatus 更新结果；
+           * - 与中文 LLM 复核共用同一轮询机制（当 overallRiskScore 从 0 变为实际值时触发 UI 刷新）。
+           */
+          const enLlmDeps = llmDeps;
+          (async () => {
+            try {
+              log.info("Starting background English LLM detection", {
+                sessionId: session.sessionId,
+                paragraphCount: paragraphs.length,
+              });
+              const enReport = await detectAigcRiskAsync(paragraphs, enLlmDeps);
+              params.store.update(session.sessionId, { reportBefore: enReport });
+              log.info("Background English LLM detection completed", {
+                sessionId: session.sessionId,
+                overallScore: enReport.overallRiskScore,
+              });
+            } catch (err) {
+              log.error("Background English LLM detection failed", { error: String(err) });
+            }
+          })();
+        } else {
+          /**
+           * 中文路径：LLM 复核高风险段落（最多 30 个），与规则分融合后更新 reportBefore。
+           * 这是原有逻辑，保持不变。
+           */
+          const MAX_JUDGE = 30;
+          const candidatesForJudge = reportBefore.paragraphReports
+            .filter((r) => r.riskScore >= 50)
+            .sort((a, b) => b.riskScore - a.riskScore)
+            .slice(0, MAX_JUDGE);
 
-      if (candidatesForJudge.length > 0 && process.env.DASHSCOPE_API_KEY) {
-        (async () => {
-          try {
-            log.info("Starting background LLM judge review", {
-              sessionId: session.sessionId,
-              candidateCount: candidatesForJudge.length,
-            });
-
-            const judgeResults = await Promise.allSettled(
-              candidatesForJudge.map((r) =>
-                judgeParagraphWithDashscope({
-                  logger: log,
-                  paragraphText: r.text,
-                  signals: r.signals,
-                })
-              )
-            );
-
-            for (let j = 0; j < candidatesForJudge.length; j++) {
-              const result = judgeResults[j];
-              if (result.status !== "fulfilled") continue;
-              const judgeOutput = result.value;
-              const paraReport = candidatesForJudge[j];
-
-              const fused = Math.round(
-                paraReport.riskScore * 0.4 + judgeOutput.riskScore0to100 * 0.6
-              );
-              paraReport.riskScore = Math.min(100, Math.max(0, fused));
-              paraReport.riskLevel =
-                paraReport.riskScore >= 70 ? "high" : paraReport.riskScore >= 35 ? "medium" : "low";
-
-              if (judgeOutput.topReasons?.length) {
-                paraReport.signals.push({
-                  signalId: "llm_judge_review",
-                  category: "aiPattern",
-                  title: "AI 复核判断",
-                  evidence: judgeOutput.topReasons.slice(0, 3),
-                  suggestion: judgeOutput.shouldRewrite
-                    ? "建议对此段落进行改写以降低 AI 痕迹。"
-                    : "AI 复核认为此段落风险可控。",
-                  score: 0,
+          if (candidatesForJudge.length > 0) {
+            (async () => {
+              try {
+                log.info("Starting background LLM judge review", {
+                  sessionId: session.sessionId,
+                  candidateCount: candidatesForJudge.length,
                 });
+
+                const judgeResults = await Promise.allSettled(
+                  candidatesForJudge.map((r) =>
+                    judgeParagraphWithDashscope({
+                      logger: log,
+                      paragraphText: r.text,
+                      signals: r.signals,
+                    })
+                  )
+                );
+
+                for (let j = 0; j < candidatesForJudge.length; j++) {
+                  const result = judgeResults[j];
+                  if (result.status !== "fulfilled") continue;
+                  const judgeOutput = result.value;
+                  const paraReport = candidatesForJudge[j];
+
+                  const fused = Math.round(
+                    paraReport.riskScore * 0.4 + judgeOutput.riskScore0to100 * 0.6
+                  );
+                  paraReport.riskScore = Math.min(100, Math.max(0, fused));
+                  paraReport.riskLevel =
+                    paraReport.riskScore >= 70
+                      ? "high"
+                      : paraReport.riskScore >= 35
+                        ? "medium"
+                        : "low";
+
+                  if (judgeOutput.topReasons?.length) {
+                    paraReport.signals.push({
+                      signalId: "llm_judge_review",
+                      category: "aiPattern",
+                      title: "AI 复核判断",
+                      evidence: judgeOutput.topReasons.slice(0, 3),
+                      suggestion: judgeOutput.shouldRewrite
+                        ? "建议对此段落进行改写以降低 AI 痕迹。"
+                        : "AI 复核认为此段落风险可控。",
+                      score: 0,
+                    });
+                  }
+                }
+
+                // 重新计算文档整体分（对齐知网标准：AI字符数占比）
+                let aiChars = 0, allChars = 0;
+                for (const r of reportBefore.paragraphReports) {
+                  const len = r.text.length;
+                  allChars += len;
+                  if (r.riskScore >= 35) aiChars += len * (r.riskScore / 100);
+                }
+                reportBefore.overallRiskScore =
+                  allChars > 0
+                    ? Math.min(100, Math.max(0, Math.round((aiChars / allChars) * 100)))
+                    : 0;
+                reportBefore.overallRiskLevel =
+                  reportBefore.overallRiskScore >= 70
+                    ? "high"
+                    : reportBefore.overallRiskScore >= 35
+                      ? "medium"
+                      : "low";
+
+                params.store.update(session.sessionId, { reportBefore });
+                log.info("Background LLM judge completed", {
+                  sessionId: session.sessionId,
+                  overallScore: reportBefore.overallRiskScore,
+                });
+              } catch (err) {
+                log.error("Background LLM judge failed", { error: String(err) });
               }
-            }
-
-            // 重新计算文档整体分（对齐知网标准：AI字符数占比）
-            let aiChars = 0,
-              allChars = 0;
-            for (const r of reportBefore.paragraphReports) {
-              const len = r.text.length;
-              allChars += len;
-              if (r.riskScore >= 35) aiChars += len * (r.riskScore / 100);
-            }
-            reportBefore.overallRiskScore =
-              allChars > 0 ? Math.min(100, Math.max(0, Math.round((aiChars / allChars) * 100))) : 0;
-            reportBefore.overallRiskLevel =
-              reportBefore.overallRiskScore >= 70
-                ? "high"
-                : reportBefore.overallRiskScore >= 35
-                  ? "medium"
-                  : "low";
-
-            params.store.update(session.sessionId, { reportBefore });
-            log.info("Background LLM judge completed", {
-              sessionId: session.sessionId,
-              overallScore: reportBefore.overallRiskScore,
-            });
-          } catch (err) {
-            log.error("Background LLM judge failed", { error: String(err) });
+            })();
           }
-        })();
+        }
       }
     })
   );
