@@ -51,6 +51,7 @@ export function registerUploadRoutes(params: {
         accountId,
       });
 
+      const t0 = Date.now();
       log.info("Uploaded docx", {
         sessionId: session.sessionId,
         filename: session.filename,
@@ -58,6 +59,8 @@ export function registerUploadRoutes(params: {
       });
 
       const parsed = await parseDocx(file.buffer);
+      const t1 = Date.now();
+
       const paragraphs = parsed.paragraphs.map((p) => ({
         id: p.id,
         index: p.index,
@@ -66,6 +69,7 @@ export function registerUploadRoutes(params: {
       }));
 
       const reportBefore = detectAigcRisk(paragraphs);
+      const t2 = Date.now();
 
       // 先保存规则检测结果并立即返回（避免 Zeabur 等平台的 HTTP 超时）
       const storedParas = parsed.paragraphs.map((p) => ({
@@ -84,10 +88,19 @@ export function registerUploadRoutes(params: {
         revisedDocx: undefined,
         revisedDocxRevision: undefined,
       });
+      const t3 = Date.now();
 
-      log.info("Parsed docx paragraphs", {
+      // 分阶段计时日志：帮助定位大文件上传的性能瓶颈
+      log.info("Docx upload pipeline timing", {
         sessionId: session.sessionId,
+        fileSizeKB: Math.round(file.size / 1024),
+        parseMs: t1 - t0,
+        detectMs: t2 - t1,
+        persistMs: t3 - t2,
+        totalMs: t3 - t0,
         paragraphCount: parsed.paragraphs.length,
+        imageParagraphs: paragraphs.filter((p) => p.kind === "imageParagraph").length,
+        textParagraphs: paragraphs.filter((p) => p.kind === "paragraph").length,
       });
 
       res.json({

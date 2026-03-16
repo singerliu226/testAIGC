@@ -56,9 +56,12 @@ function shieldTagBlocks(xml: string, tagName: string, map: string[]): string {
 
     result += xml.slice(pos, openIdx);
 
-    // 从 openIdx 开始，用计数器找到匹配的闭标签
+    // 从 openIdx+openTag.length 开始（跳过外层开标签名本身），用计数器找到匹配的闭标签。
+    // 设计原因：若从 openIdx 开始，innerHTML 第一次 indexOf 会再次命中外层开标签，
+    // 使 depth 多被累加 1，导致配对的闭标签被当成"内层闭标签"消耗掉，永远找不到匹配 → found = false。
+    // 跳过标签名后 depth 从 0 开始，首次遇到 close tag 即为匹配的外层闭标签。
     let depth = 0;
-    let scanPos = openIdx;
+    let scanPos = openIdx + openTag.length;
     let found = false;
 
     while (scanPos < xml.length) {
@@ -148,8 +151,17 @@ function restoreShields(xml: string, map: string[]): string {
   return xml.replace(/\x00SHIELD(\d+)\x00/g, (_, i) => map[Number(i)]);
 }
 
-/** 包含这些 XML 信号的段落被视为图片/图形段落，改写时跳过以防止格式损坏。 */
-const IMAGE_SIGNALS = ["<w:drawing", "<wps:wsp", "<v:shape", "<v:pict"];
+/**
+ * 包含这些 XML 信号的段落被视为图片/图形段落，改写时跳过以防止格式损坏。
+ *
+ * 设计原因：
+ * - 修复 shieldTagBlocks 后，屏蔽成功：image paragraph XML 经 restoreShields 还原后，
+ *   `<w:drawing>` 仍在嵌套 shield 占位符内（不可见），但外层 `<mc:AlternateContent>` 或
+ *   VML fallback 的 `<v:shape>` / `<v:pict>` 会直接暴露在还原后的 XML 里。
+ * - 加入 `<mc:AlternateContent` 作为兜底信号，确保纯 DrawingML 且 fallback 为空的极少情况
+ *   也能正确标记为图片段落。
+ */
+const IMAGE_SIGNALS = ["<w:drawing", "<wps:wsp", "<v:shape", "<v:pict", "<mc:AlternateContent"];
 
 /**
  * 从 `word/document.xml` 中按顺序提取段落（含表格单元格内段落）。
