@@ -1581,9 +1581,13 @@ textFallbackToggle.addEventListener("click",()=>{
 /** 更新额度状态条显示（页面初始化和每次检测后调用） */
 function updateQuotaBar(remaining){
   freeTextRemaining=Math.max(0,remaining);
-  textQuotaLeft.textContent=freeTextRemaining.toLocaleString();
   const exhausted=freeTextRemaining<=0;
   textQuotaBar.classList.toggle("exhausted",exhausted);
+  if(exhausted){
+    textQuotaLeft.textContent="0（已切换为积分计费）";
+  }else{
+    textQuotaLeft.textContent=freeTextRemaining.toLocaleString();
+  }
 }
 
 // ── 纯文字粘贴区：实时字数/段落统计 + 额度预估 ──
@@ -1602,14 +1606,18 @@ textInput.addEventListener("input",()=>{
   // 实时显示额度预估
   if(chars>0){
     if(freeTextRemaining<=0){
-      textQuotaEstimate.textContent="额度已用完，请改用 .docx 文件上传（永久免费）";
+      // 免费额度已耗尽，改为积分计费模式
+      const pts=Math.max(1,Math.ceil(chars/200));
+      textQuotaEstimate.textContent=`免费额度已用完，本次检测将消耗约 ${pts} 积分`;
       textQuotaEstimate.classList.remove("hidden");
     }else if(chars<=freeTextRemaining){
       const afterDetect=freeTextRemaining-chars;
       textQuotaEstimate.textContent=`检测后剩余 ${afterDetect.toLocaleString()} 字`;
       textQuotaEstimate.classList.remove("hidden");
     }else{
-      textQuotaEstimate.textContent=`超出额度 ${(chars-freeTextRemaining).toLocaleString()} 字，请减少内容或改用文件上传`;
+      // 超出免费额度，超出部分不影响使用，但整次会按积分计费
+      const pts=Math.max(1,Math.ceil(chars/200));
+      textQuotaEstimate.textContent=`超出免费额度，本次将消耗约 ${pts} 积分`;
       textQuotaEstimate.classList.remove("hidden");
     }
   }else{
@@ -1643,20 +1651,26 @@ uploadTextBtn.addEventListener("click",async()=>{
     clearTimeout(timer2);clearInterval(pTimer2);
     const json=await res.json();
     uploadProgressBar.style.width="90%";
-    // 额度用尽：402 错误，引导用户改用文件上传
+    // 积分不足（免费额度已耗尽且积分余额不足）
+    if(!json.ok&&json.error==="INSUFFICIENT_POINTS"){
+      uploadProgress.classList.remove("visible");
+      updateQuotaBar(0);
+      showToast(`积分不足：本次检测需 ${json.pointsNeeded??'若干'} 积分，当前余额 ${json.balance??0} 积分。请先充值后再使用文字检测。`,"err",8000);
+      return;
+    }
+    // 兼容旧版：免费额度用完但后端未升级时的 402（理论上不再触发）
     if(!json.ok&&json.error==="FREE_TEXT_QUOTA_EXCEEDED"){
       uploadProgress.classList.remove("visible");
       updateQuotaBar(json.freeRemaining??0);
-      showToast("文字检测免费额度已用完，请上传 .docx 文件（永久免费）","warn",6000);
-      // 高亮上传区，提示用户改用文件上传
-      dropZone.style.borderColor="var(--pri)";
-      dropZone.style.background="rgba(79,70,229,0.04)";
-      setTimeout(()=>{dropZone.style.borderColor="";dropZone.style.background="";},4000);
+      showToast("文字检测免费额度已用完，积分也不足，请充值后继续","warn",6000);
       return;
     }
     if(json.ok&&json.sessionId){
-      // 成功后更新剩余额度
+      // 成功后更新剩余额度，若已改为积分计费则提示消耗了多少积分
       if(typeof json.freeRemaining==="number")updateQuotaBar(json.freeRemaining);
+      if(json.detectionChargedPoints>0){
+        showToast(`已消耗 ${json.detectionChargedPoints} 积分完成文字检测（免费额度已用完）`,"ok",4000);
+      }
       state.sessionId=json.sessionId;
       localStorage.setItem(lastSessionKey,json.sessionId);
       syncExportButtons(`/api/export/${encodeURIComponent(json.sessionId)}`,false);

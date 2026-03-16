@@ -18,6 +18,8 @@ import {
   getFreeTextCharsRemaining,
   FREE_TEXT_CHARS_QUOTA,
 } from "../../../billing/index.js";
+import { estimatePointsByChars } from "../../../billing/pricing.js";
+import { randomUUID } from "node:crypto";
 
 export function registerUploadRoutes(params: {
   router: Router;
@@ -309,24 +311,43 @@ export function registerUploadTextRoute(params: {
         throw new HttpError(400, "EMPTY_TEXT", "未能从粘贴内容中识别有效段落，请检查文字格式");
       }
 
-      // ── 免费额度检查 ──
-      // 文字粘贴检测不消耗积分，但每账号终身只有 FREE_TEXT_CHARS_QUOTA（10,000 字）的免费额度。
-      // 额度用尽后返回 402，引导用户改用文件上传（永久免费）。
+      // ── 免费额度检查 + 积分降级扣费 ──
+      // 文字粘贴检测每账号终身有 FREE_TEXT_CHARS_QUOTA（10,000 字）的免费额度。
+      // 免费额度耗尽后，改为按字符数扣积分（约每 200 字 1 积分），确保用户仍可正常使用。
+      // 若积分也不足，则返回 402 提示充值。
       const charLen = body.text.length;
+      let detectionChargedPoints = 0;
       try {
         consumeFreeTextChars(accountId, charLen);
       } catch (quotaErr: unknown) {
         if ((quotaErr as { code?: string }).code === "FREE_TEXT_QUOTA_EXCEEDED") {
-          const freeRemaining = getFreeTextCharsRemaining(accountId);
-          res.status(402).json({
-            ok: false,
-            error: "FREE_TEXT_QUOTA_EXCEEDED",
-            message: `文字检测免费额度（${FREE_TEXT_CHARS_QUOTA.toLocaleString()} 字）已用完。直接上传 .docx 文件可永久免费检测。`,
-            freeRemaining,
+          // 免费额度不足，尝试用积分支付本次检测
+          const pointsNeeded = Math.max(1, estimatePointsByChars(body.text));
+          const balance = ledger.getBalance(accountId);
+          if (balance < pointsNeeded) {
+            res.status(402).json({
+              ok: false,
+              error: "INSUFFICIENT_POINTS",
+              message: `文字检测免费额度（${FREE_TEXT_CHARS_QUOTA.toLocaleString()} 字）已用完，本次检测需 ${pointsNeeded} 积分，当前余额 ${balance} 积分不足，请先充值。`,
+              freeRemaining: 0,
+              pointsNeeded,
+              balance,
+            });
+            return;
+          }
+          // 积分充足，扣费后继续
+          const callId = randomUUID();
+          ledger.charge(accountId, pointsNeeded, {
+            billing: "detection",
+            callId,
+            type: "text_detection",
+            charLen,
+            pointsCharged: pointsNeeded,
           });
-          return;
+          detectionChargedPoints = pointsNeeded;
+        } else {
+          throw quotaErr;
         }
-        throw quotaErr;
       }
 
       log.info("Text upload: split paragraphs", {
@@ -334,6 +355,7 @@ export function registerUploadTextRoute(params: {
         paragraphCount: paragraphTexts.length,
         totalChars: body.text.length,
         freeRemaining: getFreeTextCharsRemaining(accountId),
+        detectionChargedPoints,
       });
 
       // 生成最小合法 docx，保证后续 parseDocx / patchDocxParagraphs 可正常工作
@@ -380,8 +402,10 @@ export function registerUploadTextRoute(params: {
         report: reportBefore,
         judgeStatus: "pending",
         message: "规则检测完成，LLM 复核正在后台进行中…",
-        // 额度消耗后剩余量，供前端实时更新配额显示
+        // 免费额度剩余量，供前端实时更新配额显示
         freeRemaining: getFreeTextCharsRemaining(accountId),
+        // 若免费额度已耗尽改为积分扣费，告知前端消耗了多少积分
+        detectionChargedPoints: detectionChargedPoints > 0 ? detectionChargedPoints : undefined,
       });
 
       // ── LLM 复核在后台异步执行（与 /upload 逻辑完全相同） ──
