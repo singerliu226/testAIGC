@@ -614,10 +614,17 @@ body.sidebar-open .action-bar{margin-right:400px}
       </div>
       <div class="verdict-filename" id="verdictFilename"></div>
       <div id="deltaInfo" class="hidden delta-bar"></div>
-      <button class="btn btn-export hidden" id="exportTop" style="margin-top:12px" onclick="openPreview()">
-        <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
-        预览并下载论文
-      </button>
+      <div id="verdictSuggestion" class="hidden" style="margin-top:14px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.7;display:flex;align-items:flex-start;gap:8px"></div>
+      <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
+        <button class="btn btn-primary hidden" id="continueRewriteTop">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
+          继续降重
+        </button>
+        <button class="btn btn-export hidden" id="exportTop" onclick="openPreview()">
+          <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
+          预览并下载论文
+        </button>
+      </div>
     </div>
   </div>
 
@@ -920,24 +927,22 @@ const $ = (id) => document.getElementById(id);
 const out=$("out"),uploadBtn=$("upload"),rewriteToTargetBtn=$("rewriteToTarget"),cancelBtn=$("cancel"),fileInput=$("file"),exportLink=$("export"),exportTop=$("exportTop"),balanceEl=$("balance"),estimateEl=$("estimate"),estimateWrap=$("estimateWrap"),topupBtn=$("topup"),recheckBtn=$("recheck"),historyBtn=$("history"),privacyBtn=$("privacy"),historyModal=$("historyModal"),historyClose=$("historyClose"),historyBody=$("historyBody"),privacyModal=$("privacyModal"),privacyClose=$("privacyClose"),overviewCard=$("overviewCard"),reportCard=$("reportCard"),tbody=$("tbody"),minScore=$("minScore"),limitationsEl=$("limitations"),selectShownBtn=$("selectShown"),clearSelBtn=$("clearSel"),actionBar=$("actionBar"),selCountEl=$("selCount"),deltaInfo=$("deltaInfo"),dropZone=$("dropZone"),uploadProgress=$("uploadProgress"),uploadProgressBar=$("uploadProgressBar");
 const rwConfirmModal=$("rwConfirmModal"),rwConfirmStats=$("rwConfirmStats"),rwConfirmNotices=$("rwConfirmNotices"),rwConfirmOkBtn=$("rwConfirmOk"),rwConfirmCancelBtn=$("rwConfirmCancel"),rwConfirmCloseBtn=$("rwConfirmClose");
 const rwFailModal=$("rwFailModal"),rwFailContent=$("rwFailContent"),rwFailManualBtn=$("rwFailManual"),rwFailRiskBtn=$("rwFailRisk"),rwFailCloseBtn=$("rwFailClose");
-const verdictIcon=$("verdictIcon"),verdictTitle=$("verdictTitle"),verdictDesc=$("verdictDesc"),verdictBarFill=$("verdictBarFill"),verdictBarLabel=$("verdictBarLabel"),verdictFilename=$("verdictFilename"),emptyState=$("emptyState");
+const verdictIcon=$("verdictIcon"),verdictTitle=$("verdictTitle"),verdictDesc=$("verdictDesc"),verdictBarFill=$("verdictBarFill"),verdictBarLabel=$("verdictBarLabel"),verdictFilename=$("verdictFilename"),emptyState=$("emptyState"),verdictSuggestion=$("verdictSuggestion"),continueRewriteTop=$("continueRewriteTop");
 const tabFilter=$("tabFilter"),countAll=$("countAll"),countMedium=$("countMedium"),countHigh=$("countHigh");
 const chatSidebar=$("chatSidebar"),chatCloseBtn=$("chatClose"),chatParaLabel=$("chatParaLabel"),chatParaPreview=$("chatParaPreview"),chatSuggestionsEl=$("chatSuggestions"),chatMessagesEl=$("chatMessages"),chatInput=$("chatInput"),chatSendBtn=$("chatSend");
 const actionBarToggleBtn=$("actionBarToggle"),actionBarToggleIcon=$("actionBarToggleIcon"),actionBarToggleLabel=$("actionBarToggleLabel");
 let activeFilter="medium";
 
 // ── 操作栏折叠/展开 ──
-// 折叠状态存入 localStorage，刷新后保持用户的选择
-let actionBarCollapsed=(localStorage.getItem("actionBarCollapsed")==="1");
+// 默认展开，仅在用户主动点击时折叠，不持久化状态
+let actionBarCollapsed=false;
 function applyActionBarCollapse(){
   actionBar.classList.toggle("collapsed",actionBarCollapsed);
   actionBarToggleLabel.textContent=actionBarCollapsed?"展开操作栏":"收起";
-  // 收起时箭头朝上（旋转通过 CSS 完成），展开时朝下
 }
 applyActionBarCollapse();
 actionBarToggleBtn.addEventListener("click",()=>{
   actionBarCollapsed=!actionBarCollapsed;
-  localStorage.setItem("actionBarCollapsed",actionBarCollapsed?"1":"0");
   applyActionBarCollapse();
 });
 
@@ -1238,6 +1243,7 @@ function updateSelectionUI(){
   estimateEl.textContent=String(pts);
   estimateWrap.style.display=cnt>0?"inline":"none";
   rewriteToTargetBtn.disabled=!state.sessionId||queue.running;
+  continueRewriteTop.disabled=!state.sessionId||queue.running;
   actionBar.classList.toggle("visible",!!state.sessionId);
   const hasRevised=state.session&&state.session.revised&&Object.keys(state.session.revised).length>0;
   syncExportButtons(null,hasRevised);
@@ -1297,6 +1303,58 @@ function render(){
     deltaInfo.style.color=d<0?"var(--ok)":"var(--warn)";
     deltaInfo.innerHTML=`AI率 <strong>${Math.round(sBefore)}%</strong> → <strong>${Math.round(sAfter)}%</strong>（${d<0?"降低":"升高"} <strong>${Math.abs(Math.round(d))}%</strong>）`;
   }else deltaInfo.classList.add("hidden");
+
+  // ── suggestion + continue-rewrite button ──
+  if(scoreInt>15){
+    let suggIcon,suggText,suggBg,suggColor;
+    if(hasRevised){
+      if(scoreInt>=70){
+        suggIcon='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--err)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+        suggText=`当前AI率仍为 <strong>${scoreInt}%</strong>，远高于安全线（15%），<strong>务必继续降重</strong>后再提交。`;
+        suggBg="var(--err-bg,#fef2f2)";suggColor="var(--err)";
+      }else if(scoreInt>=35){
+        suggIcon='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+        suggText=`AI率已有所下降，但当前 <strong>${scoreInt}%</strong> 仍偏高，<strong>建议继续降重</strong>至15%以下后再提交。`;
+        suggBg="var(--warn-bg,#fffbeb)";suggColor="var(--warn)";
+      }else{
+        suggIcon='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+        suggText=`当前AI率 <strong>${scoreInt}%</strong>，距离安全线（15%）仅差一步，<strong>建议再进行一轮降重</strong>即可达标。`;
+        suggBg="var(--warn-bg,#fffbeb)";suggColor="#92400e";
+      }
+    }else{
+      if(scoreInt>=70){
+        suggIcon='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--err)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"/><line x1="15" y1="9" x2="9" y2="15"/><line x1="9" y1="9" x2="15" y2="15"/></svg>';
+        suggText=`论文AI率高达 <strong>${scoreInt}%</strong>，<strong>务必进行降重处理</strong>后再提交，否则很可能无法通过审核。`;
+        suggBg="var(--err-bg,#fef2f2)";suggColor="var(--err)";
+      }else if(scoreInt>=35){
+        suggIcon='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>';
+        suggText=`论文AI率为 <strong>${scoreInt}%</strong>，存在较明显的AI痕迹，<strong>强烈建议进行降重处理</strong>。`;
+        suggBg="var(--warn-bg,#fffbeb)";suggColor="var(--warn)";
+      }else{
+        suggIcon='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--warn)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>';
+        suggText=`论文AI率为 <strong>${scoreInt}%</strong>，略高于安全线（15%），<strong>建议进行一轮降重</strong>以确保安全。`;
+        suggBg="var(--warn-bg,#fffbeb)";suggColor="#92400e";
+      }
+    }
+    verdictSuggestion.innerHTML=suggIcon+`<span>${suggText}</span>`;
+    verdictSuggestion.style.background=suggBg;
+    verdictSuggestion.style.color=suggColor;
+    verdictSuggestion.classList.remove("hidden");
+    continueRewriteTop.classList.remove("hidden");
+    continueRewriteTop.innerHTML=(hasRevised
+      ?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg> 继续降重'
+      :'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg> 开始降重');
+  }else{
+    if(hasRevised){
+      verdictSuggestion.innerHTML='<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5" style="flex-shrink:0;margin-top:2px"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg><span>AI率已降至安全范围（≤15%），可以放心下载提交！</span>';
+      verdictSuggestion.style.background="var(--ok-bg,#f0fdf4)";
+      verdictSuggestion.style.color="var(--ok)";
+      verdictSuggestion.classList.remove("hidden");
+    }else{
+      verdictSuggestion.classList.add("hidden");
+    }
+    continueRewriteTop.classList.add("hidden");
+  }
 
   recheckBtn.disabled=!state.sessionId;
 
@@ -1801,6 +1859,12 @@ textResultDownload.addEventListener("click",()=>{
 // 关闭文字结果弹窗
 textResultClose.addEventListener("click",()=>textResultModal.classList.remove("open"));
 textResultModal.addEventListener("click",e=>{if(e.target===textResultModal)textResultModal.classList.remove("open");});
+
+continueRewriteTop.addEventListener("click",()=>{
+  if(!state.sessionId||queue.running)return;
+  rewriteToTargetBtn.scrollIntoView({behavior:"smooth",block:"center"});
+  setTimeout(()=>rewriteToTargetBtn.click(),300);
+});
 
 rewriteToTargetBtn.addEventListener("click",async()=>{
   if(!state.sessionId||queue.running)return;
