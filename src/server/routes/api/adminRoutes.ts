@@ -215,8 +215,10 @@ export function registerAdminRoutes(params: { router: Router; store: SessionStor
       // 扫描所有 session（24h 内）
       const allSessions = params.store.listAllForAdmin({ sinceMs: since24h });
 
-      // 正在运行的 job（不受 24h 限制，需再全量扫描）
+      // 全量扫描（用于 running job + 历史改写记录）
       const allForJobs = params.store.listAllForAdmin();
+
+      // ── 正在运行的 job ──
       const runningJobs = allForJobs
         .filter((s) => s.autoRewriteJob?.status === "running")
         .map((s) => ({
@@ -227,6 +229,53 @@ export function registerAdminRoutes(params: { router: Router; store: SessionStor
           startedAt: s.autoRewriteJob?.createdAt ?? s.createdAt,
           elapsedMs: now - (s.autoRewriteJob?.createdAt ?? s.createdAt),
         }));
+
+      // ── 24h 内已完成的改写任务（按完成时间降序，最多 30 条）──
+      const completedJobs = allSessions
+        .filter(
+          (s) =>
+            s.autoRewriteJob?.status === "completed" &&
+            (s.autoRewriteJob.finishedAt ?? 0) >= since24h
+        )
+        .sort(
+          (a, b) =>
+            (b.autoRewriteJob?.finishedAt ?? 0) - (a.autoRewriteJob?.finishedAt ?? 0)
+        )
+        .slice(0, 30)
+        .map((s) => {
+          const job = s.autoRewriteJob!;
+          const p = job.progress ?? {};
+          const durationMs =
+            job.finishedAt && job.createdAt ? job.finishedAt - job.createdAt : null;
+          return {
+            sessionId: s.sessionId,
+            accountIdShort: s.accountId.slice(0, 8) + "…",
+            filename: s.filename,
+            finishedAt: job.finishedAt ?? null,
+            durationMs,
+            scoreBefore: typeof p.overallBefore === "number" ? Math.round(p.overallBefore) : null,
+            scoreAfter:
+              typeof p.overallCurrent === "number" ? Math.round(p.overallCurrent) : null,
+            roundsUsed: p.roundsUsed ?? 0,
+            processed: p.processed ?? 0,
+            succeeded: p.succeeded ?? 0,
+            failed: p.failed ?? 0,
+          };
+        });
+
+      // ── 24h 内改写汇总统计 ──
+      const completedLast24h = allSessions.filter(
+        (s) =>
+          s.autoRewriteJob?.status === "completed" &&
+          (s.autoRewriteJob.finishedAt ?? 0) >= since24h
+      ).length;
+      const paragraphsRewrittenLast24h = allSessions
+        .filter(
+          (s) =>
+            s.autoRewriteJob?.status === "completed" &&
+            (s.autoRewriteJob.finishedAt ?? 0) >= since24h
+        )
+        .reduce((sum, s) => sum + (s.autoRewriteJob?.progress?.succeeded ?? 0), 0);
 
       const uploadsLast1h = allSessions.filter((s) => s.createdAt >= since1h).length;
       const uploadsLast24h = allSessions.length;
@@ -244,6 +293,9 @@ export function registerAdminRoutes(params: { router: Router; store: SessionStor
         snapshot: {
           runningJobCount: jobCount,
           runningJobs,
+          completedLast24h,
+          paragraphsRewrittenLast24h,
+          completedJobs,
           uploadsLast1h,
           uploadsLast24h,
           totalSessions: allForJobs.length,

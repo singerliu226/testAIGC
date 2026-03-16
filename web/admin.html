@@ -283,18 +283,39 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
         </div>
       </div>
       <div class="card-body">
-        <!-- 统计卡片 -->
-        <div class="stat-row" id="activityStats">
+        <!-- 统计卡片：第一行（实时状态） -->
+        <div style="font-size:12px;font-weight:600;color:var(--g400);letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px">实时状态</div>
+        <div class="stat-row" id="activityStats" style="margin-bottom:16px">
           <div class="stat-card"><div class="label">正在改写任务</div><div class="value" id="actStatJobs">-</div></div>
-          <div class="stat-card"><div class="label">1小时内上传</div><div class="value" id="actStat1h">-</div></div>
-          <div class="stat-card"><div class="label">24小时内上传</div><div class="value" id="actStat24h">-</div></div>
-          <div class="stat-card"><div class="label">内存用量 (rss)</div><div class="value" id="actStatMem" style="font-size:18px">-</div></div>
+          <div class="stat-card"><div class="label">1h 内上传</div><div class="value" id="actStat1h">-</div></div>
+          <div class="stat-card"><div class="label">24h 内上传</div><div class="value" id="actStat24h">-</div></div>
+          <div class="stat-card"><div class="label">内存 (rss)</div><div class="value" id="actStatMem" style="font-size:18px">-</div></div>
+        </div>
+
+        <!-- 统计卡片：第二行（24h 改写汇总） -->
+        <div style="font-size:12px;font-weight:600;color:var(--g400);letter-spacing:.05em;text-transform:uppercase;margin-bottom:8px">24h 改写汇总</div>
+        <div class="stat-row" style="margin-bottom:20px">
+          <div class="stat-card"><div class="label">完成改写任务</div><div class="value" id="actStatCompleted">-</div></div>
+          <div class="stat-card"><div class="label">成功改写段落数</div><div class="value" id="actStatParas">-</div></div>
+          <div class="stat-card" style="flex:2">
+            <div class="label">平均效果（有数据任务）</div>
+            <div class="value" id="actStatAvgDrop" style="font-size:18px;color:var(--ok)">-</div>
+          </div>
         </div>
 
         <!-- 正在运行的 job 列表 -->
         <div style="font-weight:600;font-size:14px;margin-bottom:8px">正在运行的改写任务</div>
         <div id="activityJobList">
           <div class="activity-empty" id="activityEmpty">当前没有正在运行的改写任务</div>
+        </div>
+
+        <!-- 已完成任务记录 -->
+        <div style="font-weight:600;font-size:14px;margin:20px 0 8px;display:flex;align-items:center;gap:8px">
+          24h 内已完成改写记录
+          <span style="font-size:11px;font-weight:400;color:var(--g400)">最近 30 条，按完成时间倒序</span>
+        </div>
+        <div id="completedJobList">
+          <div class="activity-empty" id="completedEmpty">暂无完成记录</div>
         </div>
 
         <!-- 容量说明 -->
@@ -615,6 +636,21 @@ async function loadAudit(){
 
 refreshAuditBtn.addEventListener("click",loadAudit);
 
+// ── 工具函数 ──
+const completedJobList=$("completedJobList");
+const actStatCompleted=$("actStatCompleted"),actStatParas=$("actStatParas"),actStatAvgDrop=$("actStatAvgDrop");
+
+function fmtDur(ms){
+  if(!ms||ms<0)return"—";
+  const s=Math.floor(ms/1000);
+  if(s<60)return`${s}秒`;
+  return`${Math.floor(s/60)}分${s%60}秒`;
+}
+function fmtTime(ts){
+  if(!ts)return"—";
+  return new Date(ts).toLocaleString("zh-CN",{month:"2-digit",day:"2-digit",hour:"2-digit",minute:"2-digit"});
+}
+
 // ── 活跃看板 ──
 async function loadActivity(){
   try{
@@ -623,11 +659,26 @@ async function loadActivity(){
     if(!json.ok){showToast("活跃看板加载失败","err");return}
     const s=json.snapshot;
 
-    // 统计卡片
+    // 实时统计卡片
     actStatJobs.textContent=String(s.runningJobCount);
     actStat1h.textContent=String(s.uploadsLast1h);
     actStat24h.textContent=String(s.uploadsLast24h);
     actStatMem.textContent=`${s.memory.rssMB} MB`;
+
+    // 24h 改写汇总
+    actStatCompleted.textContent=String(s.completedLast24h??0);
+    actStatParas.textContent=String(s.paragraphsRewrittenLast24h??0);
+    // 计算平均 AI率降幅（仅统计有 before/after 的任务）
+    const completed=s.completedJobs||[];
+    const withScores=completed.filter(j=>j.scoreBefore!=null&&j.scoreAfter!=null);
+    if(withScores.length>0){
+      const avgDrop=withScores.reduce((sum,j)=>sum+(j.scoreBefore-j.scoreAfter),0)/withScores.length;
+      actStatAvgDrop.textContent=`↓ ${avgDrop.toFixed(1)}%`;
+      actStatAvgDrop.style.color=avgDrop>0?"var(--ok)":"var(--g500)";
+    }else{
+      actStatAvgDrop.textContent="暂无数据";
+      actStatAvgDrop.style.color="var(--g400)";
+    }
 
     // 负载标签
     const loadMap={low:"load-low",medium:"load-medium",high:"load-high"};
@@ -639,7 +690,7 @@ async function loadActivity(){
     const now=new Date(s.snapshotAt);
     activityRefreshTime.textContent=`刷新于 ${now.toLocaleTimeString("zh-CN",{hour:"2-digit",minute:"2-digit",second:"2-digit"})}`;
 
-    // job 列表
+    // 正在运行的 job 列表
     const jobs=s.runningJobs||[];
     if(!jobs.length){
       activityJobList.innerHTML='<div class="activity-empty">当前没有正在运行的改写任务</div>';
@@ -665,6 +716,49 @@ async function loadActivity(){
           </div>
         </div>`;
       }).join("");
+    }
+
+    // 已完成任务记录
+    if(!completed.length){
+      completedJobList.innerHTML='<div class="activity-empty">24h 内暂无完成记录</div>';
+    }else{
+      completedJobList.innerHTML=`<table style="width:100%;border-collapse:collapse;font-size:12px">
+        <thead><tr style="background:var(--g50);color:var(--g500)">
+          <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--g200);font-weight:500">文件名</th>
+          <th style="padding:8px 10px;text-align:center;border-bottom:1px solid var(--g200);font-weight:500">完成时间</th>
+          <th style="padding:8px 10px;text-align:center;border-bottom:1px solid var(--g200);font-weight:500">耗时</th>
+          <th style="padding:8px 10px;text-align:center;border-bottom:1px solid var(--g200);font-weight:500">AI率变化</th>
+          <th style="padding:8px 10px;text-align:center;border-bottom:1px solid var(--g200);font-weight:500">成功/总段</th>
+          <th style="padding:8px 10px;text-align:center;border-bottom:1px solid var(--g200);font-weight:500">轮数</th>
+          <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--g200);font-weight:500">账号</th>
+        </tr></thead>
+        <tbody>${completed.map(j=>{
+          const drop=j.scoreBefore!=null&&j.scoreAfter!=null?j.scoreBefore-j.scoreAfter:null;
+          const dropStr=drop!=null
+            ?(drop>0?`<span style="color:var(--ok);font-weight:600">↓${drop.toFixed(0)}%</span>`
+              :drop<0?`<span style="color:var(--err)">↑${Math.abs(drop).toFixed(0)}%</span>`
+              :`<span style="color:var(--g400)">±0%</span>`)
+            :"—";
+          const scoreStr=j.scoreBefore!=null&&j.scoreAfter!=null
+            ?`${j.scoreBefore}% → ${j.scoreAfter}%`:"—";
+          return`<tr style="border-bottom:1px solid var(--g100)" onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background=''">
+            <td style="padding:8px 10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(j.filename)}">${esc(j.filename||"—")}</td>
+            <td style="padding:8px 10px;text-align:center;color:var(--g500)">${fmtTime(j.finishedAt)}</td>
+            <td style="padding:8px 10px;text-align:center;color:var(--g500)">${fmtDur(j.durationMs)}</td>
+            <td style="padding:8px 10px;text-align:center">
+              <div>${dropStr}</div>
+              <div style="font-size:11px;color:var(--g400)">${scoreStr}</div>
+            </td>
+            <td style="padding:8px 10px;text-align:center">
+              <span style="color:var(--ok);font-weight:600">${j.succeeded??0}</span>
+              <span style="color:var(--g400)"> / ${j.processed??0}</span>
+              ${j.failed>0?`<span style="color:var(--err);font-size:11px"> (失败${j.failed})</span>`:""}
+            </td>
+            <td style="padding:8px 10px;text-align:center;color:var(--g500)">${j.roundsUsed??0} 轮</td>
+            <td style="padding:8px 10px;font-family:var(--font-mono);font-size:11px;color:var(--g400)">${esc(j.accountIdShort)}</td>
+          </tr>`;
+        }).join("")}</tbody>
+      </table>`;
     }
   }catch(e){showToast("活跃看板网络错误","err")}
 }
