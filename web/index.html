@@ -145,8 +145,20 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .diff del{background:#fecaca;text-decoration:line-through;border-radius:2px;padding:0 1px}
 
 /* ── action bar (bottom) ── */
-.action-bar{display:none;position:sticky;bottom:0;background:white;border-top:1px solid var(--g200);padding:12px 20px;box-shadow:0 -2px 8px rgba(0,0,0,.06);z-index:40}
-.action-bar.visible{display:flex;align-items:center;justify-content:space-between;gap:12px}
+.action-bar{display:none;position:sticky;bottom:0;background:white;border-top:1px solid var(--g200);box-shadow:0 -2px 8px rgba(0,0,0,.06);z-index:40}
+.action-bar.visible{display:block}
+/* 折叠/展开 tab：紧贴操作栏顶部右侧，像一个小标签 */
+.action-bar-toggle{display:flex;align-items:center;gap:4px;padding:3px 14px 3px 12px;font-size:11px;color:var(--g400);cursor:pointer;border:none;border-bottom:1px solid var(--g100);background:transparent;width:100%;justify-content:flex-end;transition:.15s;line-height:1.6}
+.action-bar-toggle:hover{color:var(--pri);background:var(--pri-l)}
+.action-bar-toggle svg{transition:transform .2s ease;flex-shrink:0}
+/* 展开态 → 体内容区域正常显示、toggle 在顶部 */
+#actionBarBody{padding:12px 20px}
+/* 折叠态 → 隐藏主体，border-top 用主色提示可点击 */
+.action-bar.collapsed{border-top:2px solid var(--pri)}
+.action-bar.collapsed #actionBarBody{display:none}
+.action-bar.collapsed .action-bar-toggle{border-bottom:none}
+.action-bar.collapsed .action-bar-toggle svg{transform:rotate(180deg)}
+.action-bar-inner{display:flex;align-items:center;justify-content:space-between;gap:12px}
 .action-bar .info{font-size:13px;color:var(--g500)}
 .action-bar .info strong{color:var(--g900)}
 .rewrite-progress{display:none;align-items:center;gap:10px;width:100%;padding:8px 0 0}
@@ -560,8 +572,13 @@ body.sidebar-open .action-bar{margin-right:400px}
 
 <!-- ══════ BOTTOM ACTION BAR ══════ -->
 <div class="action-bar" id="actionBar">
-  <div style="flex:1">
-    <div style="display:flex;align-items:center;justify-content:space-between;gap:12px">
+  <!-- 折叠/展开 tab -->
+  <button class="action-bar-toggle" id="actionBarToggle" title="折叠/展开操作栏">
+    <svg id="actionBarToggleIcon" width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M18 15l-6-6-6 6"/></svg>
+    <span id="actionBarToggleLabel">收起</span>
+  </button>
+  <div id="actionBarBody">
+    <div class="action-bar-inner">
       <div class="info">
         已选 <strong id="selCount">0</strong> 段<span id="estimateWrap">，约需 <strong id="estimate">0</strong> 积分</span>
       </div>
@@ -818,7 +835,23 @@ const rwFailModal=$("rwFailModal"),rwFailContent=$("rwFailContent"),rwFailManual
 const verdictIcon=$("verdictIcon"),verdictTitle=$("verdictTitle"),verdictDesc=$("verdictDesc"),verdictBarFill=$("verdictBarFill"),verdictBarLabel=$("verdictBarLabel"),verdictFilename=$("verdictFilename"),emptyState=$("emptyState");
 const tabFilter=$("tabFilter"),countAll=$("countAll"),countMedium=$("countMedium"),countHigh=$("countHigh");
 const chatSidebar=$("chatSidebar"),chatCloseBtn=$("chatClose"),chatParaLabel=$("chatParaLabel"),chatParaPreview=$("chatParaPreview"),chatSuggestionsEl=$("chatSuggestions"),chatMessagesEl=$("chatMessages"),chatInput=$("chatInput"),chatSendBtn=$("chatSend");
+const actionBarToggleBtn=$("actionBarToggle"),actionBarToggleIcon=$("actionBarToggleIcon"),actionBarToggleLabel=$("actionBarToggleLabel");
 let activeFilter="medium";
+
+// ── 操作栏折叠/展开 ──
+// 折叠状态存入 localStorage，刷新后保持用户的选择
+let actionBarCollapsed=(localStorage.getItem("actionBarCollapsed")==="1");
+function applyActionBarCollapse(){
+  actionBar.classList.toggle("collapsed",actionBarCollapsed);
+  actionBarToggleLabel.textContent=actionBarCollapsed?"展开操作栏":"收起";
+  // 收起时箭头朝上（旋转通过 CSS 完成），展开时朝下
+}
+applyActionBarCollapse();
+actionBarToggleBtn.addEventListener("click",()=>{
+  actionBarCollapsed=!actionBarCollapsed;
+  localStorage.setItem("actionBarCollapsed",actionBarCollapsed?"1":"0");
+  applyActionBarCollapse();
+});
 
 let state={sessionId:null,session:null,selected:new Set(),chatParagraphId:null,chatSending:false};
 const accountIdKey="aigc_agent_account_id";
