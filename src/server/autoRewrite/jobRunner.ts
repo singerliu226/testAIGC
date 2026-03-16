@@ -89,6 +89,7 @@ export async function runAutoRewriteJob(params: {
   let bestScore = Number.POSITIVE_INFINITY;
   let noImproveRounds = 0;
   let jobTimedOut = false; // 全局超时标志，供内外两层循环共享
+  let exhaustedReason: string | undefined; // 候选耗尽原因，传递给前端展示
   const perPidAttempts = new Map<string, number>();
 
   /**
@@ -211,15 +212,12 @@ export async function runAutoRewriteJob(params: {
           .filter((r) => (perPidAttempts.get(r.paragraphId) ?? 0) < params.body.maxPerParagraph);
         const allHighRisk = (curReport.paragraphReports ?? []).filter((r) => r.riskScore >= params.body.minParagraphScore);
 
-        let reason: string;
         if (allHighRisk.length === 0) {
-          reason = `所有段落 AI 风险均低于阈值（${params.body.minParagraphScore}%），无需改写`;
+          exhaustedReason = `所有段落 AI 风险均低于阈值（${params.body.minParagraphScore}%），无需改写`;
         } else if (beforeCumulativeFilter.length === 0) {
-          // 所有高风险段落已在本轮耗尽 maxPerParagraph
-          reason = `本轮所有高风险段落（${allHighRisk.length} 段）已达单任务改写上限（${params.body.maxPerParagraph} 次/段），建议重新启动任务继续`;
+          exhaustedReason = `本轮所有高风险段落（${allHighRisk.length} 段）已达单任务改写上限（${params.body.maxPerParagraph} 次/段），建议重新启动任务继续`;
         } else {
-          // 被跨任务累计次数过滤掉
-          reason = `所有高风险段落均已累计改写 ${MAX_CUMULATIVE_REWRITES} 次或以上，已达跨任务上限。AI率当前 ${Math.round(overall)}%，可能需要手动调整`;
+          exhaustedReason = `所有高风险段落均已累计改写 ${MAX_CUMULATIVE_REWRITES} 次或以上，已达跨任务上限。AI率当前 ${Math.round(overall)}%，可能需要手动调整`;
         }
 
         params.store.update(params.sessionId, {
@@ -233,9 +231,8 @@ export async function runAutoRewriteJob(params: {
               succeeded,
               failed: failures.length,
               overallCurrent: overall,
-              lastMessage: reason,
-              // 用 exhaustedReason 方便前端区分"正常完成"与"无候选完成"
-              exhaustedReason: reason,
+              lastMessage: exhaustedReason,
+              exhaustedReason,
             },
           },
         });
@@ -467,6 +464,7 @@ export async function runAutoRewriteJob(params: {
             : failures.length
             ? `完成（有 ${failures.length} 段未能自动改写）`
             : "完成",
+          ...(exhaustedReason ? { exhaustedReason } : {}),
         },
         failures: failures.slice(-80),
       },

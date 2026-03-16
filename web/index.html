@@ -1935,14 +1935,22 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
 
       if(job.status==="completed"){
         stopPolling();
-        cancelBtn.style.display="none"; // 完成后隐藏取消按钮
+        cancelBtn.style.display="none";
         const pp=job.progress||{};
         const exhausted=pp.exhaustedReason;
-        const didNothing=Number(pp.roundsUsed||0)===0&&Number(pp.processed||0)===0;
+        const succCount=Number(pp.succeeded||0);
+        const procCount=Number(pp.processed||0);
+        const roundCount=Number(pp.roundsUsed||0);
+        const didNothing=roundCount===0&&procCount===0;
+        const allFailed=procCount>0&&succCount===0;
 
-        // 0 候选直接完成：进度条不显示 100%，避免造成"已改写"的误导
-        rwProgressFill.style.width=didNothing?"0%":"100%";
-        rwProgressText.textContent=didNothing?"无可改写段落":"已完成（100%）";
+        if(didNothing||allFailed){
+          rwProgressFill.style.width="0%";
+          rwProgressText.textContent=didNothing?"无可改写段落":`已尝试 ${procCount} 段均未成功`;
+        }else{
+          rwProgressFill.style.width="100%";
+          rwProgressText.textContent="已完成（100%）";
+        }
 
         const sess=await fetchSession(state.sessionId);
         state.session=sess;
@@ -1951,10 +1959,16 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
         const afterScore=sess.reportAfter?.overallRiskScore;
         const fails=(job.failures||[]);
 
-        // 专属提示：没有任何候选段落时
-        if(didNothing){
-          const reason=exhausted||"所有高风险段落均已达到改写上限，或当前 AI 率已满足目标";
-          showToast("⚠️ 本次未改写任何段落："+reason,"warn",10000);
+        if(succCount>0){
+          const exportHref=`/api/export/${encodeURIComponent(state.sessionId)}`;
+          syncExportButtons(exportHref,true);
+        }
+
+        if(didNothing||allFailed){
+          const reason=exhausted||(allFailed
+            ?`本次尝试改写 ${procCount} 段均未通过校验（被拦截或超时），AI 率未变化`
+            :"所有高风险段落均已达到改写上限，或当前 AI 率已满足目标");
+          showToast("⚠️ "+reason,"warn",10000);
           queue.running=false;
           updateSelectionUI();
           return;
@@ -1988,7 +2002,6 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
 
         if(typeof beforeScore==="number"&&typeof afterScore==="number"){
           const d=Math.round(afterScore-beforeScore);
-          // 计算还有多少高风险段落未处理，帮助用户判断是否继续（上限由后端 MAX_CUMULATIVE_REWRITES 决定，当前为 10）
           const remainHigh=(sess.reportAfter?.paragraphReports||[]).filter(r=>r.riskScore>=35).length;
           const rwCounts=sess.paragraphRewriteCounts||{};
           const remainUnlocked=remainHigh-Object.values(rwCounts).filter(v=>v>=10).length;
@@ -2676,8 +2689,20 @@ function resumeJobPolling(sessionId,jobId){
       if(job.status==="completed"||job.status==="failed"||job.status==="cancelled"){
         clearInterval(t);
         const sess=await fetchSession(sessionId);
-        if(sess&&sess.ok!==false){state.session=sess;render();}
-        if(job.status==="completed")showToast("自动降分完成（刷新前启动的任务）","ok",5000);
+        if(sess&&sess.ok!==false){
+          state.session=sess;
+          render();
+          const hasAnyRevised=sess.revised&&Object.keys(sess.revised).length>0;
+          if(hasAnyRevised){
+            syncExportButtons(`/api/export/${encodeURIComponent(sessionId)}`,true);
+          }
+        }
+        if(job.status==="completed"){
+          const succ3=Number(p.succeeded||0);
+          const proc3=Number(p.processed||0);
+          if(proc3>0&&succ3===0)showToast("⚠️ 自动降分已尝试但所有段落均未通过校验，AI 率未变化","warn",8000);
+          else showToast("自动降分完成（刷新前启动的任务）","ok",5000);
+        }
         else if(job.status==="failed")showToast("自动降分失败（刷新前启动的任务）","err",5000);
       }
     }catch(e){clearInterval(t);}
