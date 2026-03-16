@@ -116,12 +116,42 @@ export async function runAutoRewriteJob(params: {
   const JOB_MAX_DURATION_MS = 25 * 60 * 1000; // 25 分钟
   const jobStartedAt = Date.now();
 
+  /**
+   * 将当前已改写结果保存到 session。
+   *
+   * 设计原因：
+   * - 原来仅在 job 正常完成时一次性写入 revised/rewriteResults，
+   *   若中途取消/崩溃/OOM，已改写的段落全部丢失；
+   * - 提取为独立函数后，取消和每批次结束后都调用，确保数据不丢。
+   */
+  const saveRevisedToSession = () => {
+    params.store.update(params.sessionId, {
+      revised: updated,
+      rewriteResults,
+      paragraphRewriteCounts: rwCounts,
+      revisedDocx: undefined,
+      revisedDocxRevision: undefined,
+    });
+  };
+
   try {
     while (roundsUsed < params.body.maxRounds && attempted < params.body.maxTotal && !jobTimedOut) {
       // 检查取消
       const s0 = params.store.get(params.sessionId);
-      if (!s0?.autoRewriteJob || s0.autoRewriteJob.jobId !== params.jobId) return;
-      if (s0.autoRewriteJob.status === "cancelled") return;
+      if (!s0?.autoRewriteJob || s0.autoRewriteJob.jobId !== params.jobId) {
+        saveRevisedToSession();
+        return;
+      }
+      if (s0.autoRewriteJob.status === "cancelled") {
+        // 取消时保存已完成的改写结果，避免用户等了很久的工作白费
+        saveRevisedToSession();
+        const finalReport = detectAigcRisk(mergeParagraphs(paragraphs, updated));
+        params.store.update(params.sessionId, {
+          reportAfter: finalReport,
+          revision: (session.revision ?? 0) + 1,
+        });
+        return;
+      }
 
       const curReport = detectAigcRisk(mergeParagraphs(paragraphs, updated));
       const overall = curReport.overallRiskScore ?? 0;
@@ -243,8 +273,19 @@ export async function runAutoRewriteJob(params: {
         }
 
         const sCheck = params.store.get(params.sessionId);
-        if (!sCheck?.autoRewriteJob || sCheck.autoRewriteJob.jobId !== params.jobId) return;
-        if (sCheck.autoRewriteJob.status === "cancelled") return;
+        if (!sCheck?.autoRewriteJob || sCheck.autoRewriteJob.jobId !== params.jobId) {
+          saveRevisedToSession();
+          return;
+        }
+        if (sCheck.autoRewriteJob.status === "cancelled") {
+          saveRevisedToSession();
+          const finalReport2 = detectAigcRisk(mergeParagraphs(paragraphs, updated));
+          params.store.update(params.sessionId, {
+            reportAfter: finalReport2,
+            revision: (session.revision ?? 0) + 1,
+          });
+          return;
+        }
 
         const batchCandidates = candidates.slice(bi, bi + BATCH_SIZE);
         const validBatch: Array<{ c: (typeof candidates)[0]; p: (typeof paragraphs)[0] }> = [];
@@ -291,7 +332,7 @@ export async function runAutoRewriteJob(params: {
              * 90s 已足够 3 次串行 LLM 调用各完成一次（正常响应 10-25s），若仍超时则跳过本段继续。
              */
             const segmentTimeout = new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`段落 ${p.index + 1} 改写超时（>90s），已跳过`)), SEGMENT_TIMEOUT_MS)
+              setTimeout(() => reject(new Error(`段落 ${p.index + 1} 改写超时（>${SEGMENT_TIMEOUT_MS / 1000}s），已跳过`)), SEGMENT_TIMEOUT_MS)
             );
 
             const out = await Promise.race([
@@ -346,7 +387,8 @@ export async function runAutoRewriteJob(params: {
           }
         }
 
-        // 批次结束后统一更新进度
+        // 批次结束后：增量保存改写结果 + 更新进度（防止进程崩溃/OOM 丢失数据）
+        saveRevisedToSession();
         const sAfter = params.store.get(params.sessionId);
         if (sAfter?.autoRewriteJob && sAfter.autoRewriteJob.jobId === params.jobId) {
           params.store.update(params.sessionId, {

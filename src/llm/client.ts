@@ -39,7 +39,7 @@ export function loadDashscopeConfigFromEnv(): DashscopeConfig {
     apiKey,
     baseURL,
     model,
-    timeoutMs: Number.isFinite(timeoutMs) ? Math.max(5000, Math.floor(timeoutMs)) : 60000,
+    timeoutMs: Number.isFinite(timeoutMs) ? Math.max(5000, Math.floor(timeoutMs)) : 25000,
   };
 }
 
