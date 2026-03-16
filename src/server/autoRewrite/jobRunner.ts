@@ -53,8 +53,15 @@ export async function runAutoRewriteJob(params: {
    * - 超过阈值后系统自动跳过该段，并在前端预检弹窗中提示"建议手动处理"。
    */
   const rwCounts: Record<string, number> = { ...(session.paragraphRewriteCounts ?? {}) };
-  /** 单段最多累计改写次数，超出则跳过 */
-  const MAX_CUMULATIVE_REWRITES = 3;
+  /**
+   * 单段最多累计改写次数（跨多次任务的总计）。
+   *
+   * 设计原因：
+   * - 原值为 3，导致用户仅运行 2-3 轮后所有段落就被锁定，再次点击"一键自动降重"时
+   *   立即显示"完成"但什么都没做，造成"1 秒 100%"的错觉。
+   * - 调整为 10，允许用户在 AI 率仍较高时继续多轮改写，同时保留上限防止无限循环。
+   */
+  const MAX_CUMULATIVE_REWRITES = 10;
 
   const now = Date.now();
   const overallBefore = detectAigcRisk(mergeParagraphs(paragraphs, updated)).overallRiskScore ?? 0;
@@ -138,7 +145,49 @@ export async function runAutoRewriteJob(params: {
       const preferred = preferSet.size ? all.filter((r) => preferSet.has(r.paragraphId)) : [];
       const candidates = (preferred.length ? preferred : all).slice(0, params.body.perRound);
 
-      if (!candidates.length) break;
+      if (!candidates.length) {
+        /**
+         * 0 候选段落 → 需要告诉用户具体原因，而不是静默完成：
+         * 1. AI率已达标（overall ≤ targetScore，上方已处理）
+         * 2. 所有高风险段落均已达到单段累计改写上限（MAX_CUMULATIVE_REWRITES）
+         * 3. 所有高风险段落均已在本任务内达到 maxPerParagraph 次
+         * 通过分析哪个过滤器最先淘汰段落来给出精确提示
+         */
+        const beforeCumulativeFilter = (curReport.paragraphReports ?? [])
+          .filter((r) => r.riskScore >= params.body.minParagraphScore)
+          .filter((r) => (perPidAttempts.get(r.paragraphId) ?? 0) < params.body.maxPerParagraph);
+        const allHighRisk = (curReport.paragraphReports ?? []).filter((r) => r.riskScore >= params.body.minParagraphScore);
+
+        let reason: string;
+        if (allHighRisk.length === 0) {
+          reason = `所有段落 AI 风险均低于阈值（${params.body.minParagraphScore}%），无需改写`;
+        } else if (beforeCumulativeFilter.length === 0) {
+          // 所有高风险段落已在本轮耗尽 maxPerParagraph
+          reason = `本轮所有高风险段落（${allHighRisk.length} 段）已达单任务改写上限（${params.body.maxPerParagraph} 次/段），建议重新启动任务继续`;
+        } else {
+          // 被跨任务累计次数过滤掉
+          reason = `所有高风险段落均已累计改写 ${MAX_CUMULATIVE_REWRITES} 次或以上，已达跨任务上限。AI率当前 ${Math.round(overall)}%，可能需要手动调整`;
+        }
+
+        params.store.update(params.sessionId, {
+          autoRewriteJob: {
+            ...s0.autoRewriteJob,
+            updatedAt: Date.now(),
+            progress: {
+              ...s0.autoRewriteJob.progress,
+              roundsUsed,
+              processed: attempted,
+              succeeded,
+              failed: failures.length,
+              overallCurrent: overall,
+              lastMessage: reason,
+              // 用 exhaustedReason 方便前端区分"正常完成"与"无候选完成"
+              exhaustedReason: reason,
+            },
+          },
+        });
+        break;
+      }
 
       roundsUsed += 1;
       log.info("Auto rewrite job round started", {

@@ -163,6 +163,8 @@ export type SessionRecord = {
       currentParagraphId?: string;
       currentParagraphIndex?: number;
       lastMessage?: string;
+      /** 当 0 候选时记录的具体耗尽原因，前端可据此显示专属提示而非通用"完成" */
+      exhaustedReason?: string;
     };
     /**
      * 任务内的逐段失败信息（不中断整体任务）。

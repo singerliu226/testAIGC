@@ -1733,19 +1733,34 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
 
       if(job.status==="completed"){
         stopPolling();
-        rwProgressFill.style.width="100%";
-        rwProgressText.textContent="已完成（100%）";
+        const pp=job.progress||{};
+        const exhausted=pp.exhaustedReason;
+        const didNothing=Number(pp.roundsUsed||0)===0&&Number(pp.processed||0)===0;
+
+        // 0 候选直接完成：进度条不显示 100%，避免造成"已改写"的误导
+        rwProgressFill.style.width=didNothing?"0%":"100%";
+        rwProgressText.textContent=didNothing?"无可改写段落":"已完成（100%）";
+
         const sess=await fetchSession(state.sessionId);
         state.session=sess;
         render();
         const beforeScore=job.progress?.overallBefore;
         const afterScore=sess.reportAfter?.overallRiskScore;
         const fails=(job.failures||[]);
+
+        // 专属提示：没有任何候选段落时
+        if(didNothing){
+          const reason=exhausted||"所有高风险段落均已达到改写上限，或当前 AI 率已满足目标";
+          showToast("⚠️ 本次未改写任何段落："+reason,"warn",10000);
+          queue.running=false;
+          updateSelectionUI();
+          return;
+        }
+
         if(fails.length){
           showToast(`已完成可改部分，但有 ${fails.length} 段被拦截/失败（已跳过）`,"warn",8000);
           const wantContinue=await openRewriteFailModal(fails.length,fails);
           if(wantContinue){
-            // 继续尝试：聚焦上次失败段落，且开启风险模式
             queue.running=true;
             rewriteToTargetBtn.disabled=true;
             setRwProgress(0,1,"正在启动风险模式继续尝试…");
@@ -1770,10 +1785,10 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
 
         if(typeof beforeScore==="number"&&typeof afterScore==="number"){
           const d=Math.round(afterScore-beforeScore);
-          // 计算还有多少高风险段落未处理，帮助用户判断是否继续
+          // 计算还有多少高风险段落未处理，帮助用户判断是否继续（上限由后端 MAX_CUMULATIVE_REWRITES 决定，当前为 10）
           const remainHigh=(sess.reportAfter?.paragraphReports||[]).filter(r=>r.riskScore>=35).length;
           const rwCounts=sess.paragraphRewriteCounts||{};
-          const remainUnlocked=remainHigh-Object.values(rwCounts).filter(v=>v>=3).length;
+          const remainUnlocked=remainHigh-Object.values(rwCounts).filter(v=>v>=10).length;
           let hint="";
           if(afterScore<=15){hint="已达目标，可直接下载！";}
           else if(remainUnlocked>0){hint=`仍有 ${remainUnlocked} 个高风险段落可继续改写，建议再次点击继续降低。`;}
@@ -2235,12 +2250,25 @@ async function sendChatMessage(){
   chatMessagesEl.appendChild(tempUser);
   appendTypingIndicator();
 
+  // 55s 超时控制：Zeabur 等平台 nginx proxy_read_timeout 通常为 60s，
+  // 给服务端 LLM 调用留 55s 余量，超时后给用户明确提示而非模糊 "Failed to fetch"
+  const chatCtrl=new AbortController();
+  const chatTimer=setTimeout(()=>chatCtrl.abort(),55000);
+  // 10s 后若还未返回，先显示一个等待提示，减少用户焦虑
+  const slowTimer=setTimeout(()=>{
+    const tipEl=document.getElementById("chatSlowTip");
+    if(!tipEl){const t=document.createElement("div");t.id="chatSlowTip";t.className="chat-typing";t.textContent="AI 思考中，请耐心等待（约 15–30 秒）…";chatMessagesEl.appendChild(t);chatMessagesEl.scrollTop=chatMessagesEl.scrollHeight;}
+  },10000);
+
   try{
     const res=await fetch(`/api/chat/${encodeURIComponent(state.sessionId)}`,{
       method:"POST",
       headers:getHeaders(),
       body:JSON.stringify({paragraphId:state.chatParagraphId,message:msg}),
+      signal:chatCtrl.signal,
     });
+    clearTimeout(chatTimer);clearTimeout(slowTimer);
+    document.getElementById("chatSlowTip")?.remove();
     const json=await res.json();
     removeTypingIndicator();
 
@@ -2260,10 +2288,16 @@ async function sendChatMessage(){
     state.session=sess;
     renderChatMessages();
   }catch(e){
+    clearTimeout(chatTimer);clearTimeout(slowTimer);
+    document.getElementById("chatSlowTip")?.remove();
     removeTypingIndicator();
     const errBubble=document.createElement("div");
     errBubble.className="chat-bubble assistant";
-    errBubble.textContent="网络错误："+String(e);
+    // 区分超时错误和其他网络错误，给出更明确的指引
+    const isAbort=e instanceof DOMException&&e.name==="AbortError";
+    errBubble.textContent=isAbort
+      ?"请求超时（AI 响应超过 55 秒）。服务器可能仍在处理，请稍等片刻后再次发送，或刷新页面重试。"
+      :"网络错误："+String(e)+"（请检查网络后重试）";
     chatMessagesEl.appendChild(errBubble);
   }finally{
     state.chatSending=false;
