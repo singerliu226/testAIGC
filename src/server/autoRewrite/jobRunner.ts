@@ -88,13 +88,35 @@ export async function runAutoRewriteJob(params: {
   let roundsUsed = 0;
   let bestScore = Number.POSITIVE_INFINITY;
   let noImproveRounds = 0;
+  let jobTimedOut = false; // 全局超时标志，供内外两层循环共享
   const perPidAttempts = new Map<string, number>();
 
-  /** 每批并发改写的段落数。调大可提升吞吐，调小可降低 API 并发压力。 */
-  const BATCH_SIZE = 5;
+  /**
+   * 每批并发改写的段落数。
+   *
+   * 设计原因：
+   * - 原值为 5，在 Zeabur 生产环境下每段最多 3 次串行 LLM 调用 × 60s 超时 = 3 分钟/批，
+   *   60 段 / 5 并发 = 12 批 × 3 分钟 = 最坏 36 分钟，且 Zeabur 反向代理有时会吃掉 AbortController 信号；
+   * - 降低到 3 后，每批并发 DashScope 压力减少，API 限流概率降低，响应速度更稳定。
+   */
+  const BATCH_SIZE = 3;
+
+  /**
+   * 单段改写最长等待时间（ms）。
+   *
+   * 设计原因：
+   * - rewriteOneInternal 最多发出 3 次串行 LLM 调用，每次 LLM_TIMEOUT_MS=60s；
+   * - 在 Zeabur 生产环境，反向代理偶尔会让 AbortController 失效，导致段落无限挂起；
+   * - 设置 90s 超时后，Promise.race 会强制解除挂起的段落，将其标记为失败并继续处理其它段落。
+   */
+  const SEGMENT_TIMEOUT_MS = 90_000;
+
+  /** 整个 job 的最长运行时间（ms）。超过后自动收尾，避免长期占用服务器资源。 */
+  const JOB_MAX_DURATION_MS = 25 * 60 * 1000; // 25 分钟
+  const jobStartedAt = Date.now();
 
   try {
-    while (roundsUsed < params.body.maxRounds && attempted < params.body.maxTotal) {
+    while (roundsUsed < params.body.maxRounds && attempted < params.body.maxTotal && !jobTimedOut) {
       // 检查取消
       const s0 = params.store.get(params.sessionId);
       if (!s0?.autoRewriteJob || s0.autoRewriteJob.jobId !== params.jobId) return;
@@ -206,6 +228,19 @@ export async function runAutoRewriteJob(params: {
       for (let bi = 0; bi < candidates.length; bi += BATCH_SIZE) {
         if (attempted >= params.body.maxTotal) break;
 
+        // 全局任务超时保护：防止任务无限期运行占用服务器
+        if (Date.now() - jobStartedAt > JOB_MAX_DURATION_MS) {
+          log.warn("Auto rewrite job exceeded max duration, stopping early", {
+            sessionId: params.sessionId,
+            jobId: params.jobId,
+            elapsedMs: Date.now() - jobStartedAt,
+            attempted,
+            succeeded,
+          });
+          jobTimedOut = true;
+          break;
+        }
+
         const sCheck = params.store.get(params.sessionId);
         if (!sCheck?.autoRewriteJob || sCheck.autoRewriteJob.jobId !== params.jobId) return;
         if (sCheck.autoRewriteJob.status === "cancelled") return;
@@ -249,22 +284,34 @@ export async function runAutoRewriteJob(params: {
             const baseText = updated[p.id] ?? p.text;
             const before = paragraphs[p.index - 1]?.text;
             const after = paragraphs[p.index + 1]?.text;
-            const out = await rewriteOneInternal({
-              deps: params.deps,
-              logger: log,
-              sessionId: params.sessionId,
-              accountId: params.accountId,
-              isAdmin: params.isAdmin,
-              type: "auto",
-              paragraph: p,
-              baseText,
-              contextBefore: before,
-              contextAfter: after,
-              // eslint-disable-next-line @typescript-eslint/no-explicit-any
-              signals: (c.signals ?? []) as any,
-              riskBefore: c.riskScore,
-              allowFactRisk: params.body.allowFactRisk,
-            });
+
+            /**
+             * 单段超时保护：避免某段 LLM 调用在 Zeabur 代理下 AbortController 失效时无限挂起。
+             * 90s 已足够 3 次串行 LLM 调用各完成一次（正常响应 10-25s），若仍超时则跳过本段继续。
+             */
+            const segmentTimeout = new Promise<never>((_, reject) =>
+              setTimeout(() => reject(new Error(`段落 ${p.index + 1} 改写超时（>90s），已跳过`)), SEGMENT_TIMEOUT_MS)
+            );
+
+            const out = await Promise.race([
+              rewriteOneInternal({
+                deps: params.deps,
+                logger: log,
+                sessionId: params.sessionId,
+                accountId: params.accountId,
+                isAdmin: params.isAdmin,
+                type: "auto",
+                paragraph: p,
+                baseText,
+                contextBefore: before,
+                contextAfter: after,
+                // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                signals: (c.signals ?? []) as any,
+                riskBefore: c.riskScore,
+                allowFactRisk: params.body.allowFactRisk,
+              }),
+              segmentTimeout,
+            ]);
             return { p, out };
           })
         );
@@ -372,7 +419,11 @@ export async function runAutoRewriteJob(params: {
           failed: failures.length,
           overallBefore,
           overallCurrent: finalReport.overallRiskScore ?? 0,
-          lastMessage: failures.length ? `完成（有 ${failures.length} 段未能自动改写）` : "完成",
+          lastMessage: jobTimedOut
+            ? `已运行超 25 分钟，自动收尾（已成功改写 ${succeeded} 段）`
+            : failures.length
+            ? `完成（有 ${failures.length} 段未能自动改写）`
+            : "完成",
         },
         failures: failures.slice(-80),
       },
