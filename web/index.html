@@ -974,6 +974,7 @@ function setRwProgress(done,total,text){
   if(total<=0){rwProgress.classList.remove("visible");return}
   rwProgress.classList.add("visible");
   rwProgressFill.style.width=`${Math.round((done/total)*100)}%`;
+  rwProgressFill.style.background="var(--pri)";
   rwProgressText.textContent=text||`${done}/${total} 段`;
 }
 
@@ -2020,20 +2021,28 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
         stopPolling();
         cancelBtn.style.display="none";
         const succ2=job.progress?.succeeded??0;
-        rwProgressFill.style.width=pct+"%";
-        rwProgressText.textContent=`已停止（已改写 ${succ2} 段）`;
-        // 刷新 session 并显示已改写内容 + 下载链接
+        // 刷新 session 并更新结果视图
         const sess2=await fetchSession(state.sessionId);
         state.session=sess2;
         render();
         if(succ2>0){
-          showToast(`已停止改写，${succ2} 段结果已保存，可立即下载↓`,"ok",8000);
-          // 激活并高亮下载按钮，告知用户可以下载
-          syncExportButtons(`/api/export/${encodeURIComponent(state.sessionId)}`,true);
-          exportLink.style.outline="3px solid var(--pri)";
-          exportLink.style.outlineOffset="3px";
-          setTimeout(()=>{exportLink.style.outline="";exportLink.style.outlineOffset=""},4000);
+          const exportHref=`/api/export/${encodeURIComponent(state.sessionId)}`;
+          syncExportButtons(exportHref,true);
+          // 进度条停在当前位置，颜色变为警告橙，告知"已停止"
+          rwProgress.classList.add("visible");
+          rwProgressFill.style.width=pct+"%";
+          rwProgressFill.style.background="var(--warn)";
+          // 进度文本内嵌下载按钮，让用户一眼能点
+          rwProgressText.innerHTML=`已停止，${succ2} 段已保存&nbsp;·&nbsp;<a href="${exportHref}" style="color:var(--ok);font-weight:600;text-decoration:underline" download>立即下载</a>`;
+          // 滚动到检测结果卡片并高亮顶部下载按钮
+          overviewCard.scrollIntoView({behavior:"smooth",block:"start"});
+          exportTop.style.outline="3px solid var(--ok)";
+          exportTop.style.outlineOffset="3px";
+          setTimeout(()=>{exportTop.style.outline="";exportTop.style.outlineOffset=""},5000);
+          showToast(`已停止，${succ2} 段改写结果已保存，可查看并下载`,"ok",6000);
         }else{
+          rwProgressFill.style.width="0%";
+          rwProgressText.textContent="已取消，无改写结果";
           showToast("已取消，暂无改写结果","warn",4000);
         }
         queue.running=false;
