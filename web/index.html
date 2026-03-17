@@ -2537,42 +2537,50 @@ async function sendChatMessage(){
   }
 
   try{
-    // 服务端已将此接口改为 SSE，每 5s 发一个 ping 保活，防止 nginx proxy_read_timeout 截断
+    // 服务端使用 SSE 流式响应，每 5s 发 ping 保持连接活跃，防止反向代理截断
     const res=await fetch(`/api/chat/${encodeURIComponent(state.sessionId)}`,{
       method:"POST",
       headers:getHeaders(),
       body:JSON.stringify({paragraphId:state.chatParagraphId,message:msg}),
     });
 
-    if(!res.ok||!res.body){
+    if(!res.ok){
       const json=await res.json().catch(()=>({}));
       showChatError("请求失败："+(json?.error?.message||json?.message||res.statusText||"未知错误"));
       return;
     }
 
-    // 读取 SSE 流；活动计时：若 45s 内没有收到任何字节则视为超时
-    const reader=res.body.getReader();
-    const dec=new TextDecoder();
-    let buf="",finalData=null,lastAct=Date.now();
-    const idleTimer=setInterval(()=>{if(Date.now()-lastAct>45000){clearInterval(idleTimer);reader.cancel("idle").catch(()=>{});}},2000);
+    const ct=(res.headers.get("content-type")||"").toLowerCase();
+    let finalData=null;
 
-    try{
-      outer:while(true){
-        const{done,value}=await reader.read();
-        if(done)break;
-        lastAct=Date.now();
-        buf+=dec.decode(value,{stream:true});
-        const lines=buf.split("\n");
-        buf=lines.pop()??"";
-        for(const line of lines){
-          if(!line.startsWith("data: "))continue;
-          const txt=line.slice(6).trim();if(!txt)continue;
-          let ev;try{ev=JSON.parse(txt);}catch{continue;}
-          if(ev.type==="ping")continue; // heartbeat，忽略
-          finalData=ev;break outer; // done 或 error，停止读取
+    if(ct.includes("text/event-stream")&&res.body){
+      // ── SSE 模式：读取流，跳过 ping，等待 done/error 事件 ──
+      const reader=res.body.getReader();
+      const dec=new TextDecoder();
+      let buf="",lastAct=Date.now();
+      const idleLimit=60000; // 60s 无数据才超时（ping 每 5s 一次，正常不会触发）
+      const idleTimer=setInterval(()=>{if(Date.now()-lastAct>idleLimit){clearInterval(idleTimer);reader.cancel().catch(()=>{});}},3000);
+      try{
+        outer:while(true){
+          const{done,value}=await reader.read();
+          if(done)break;
+          lastAct=Date.now();
+          buf+=dec.decode(value,{stream:true});
+          const lines=buf.split("\n");
+          buf=lines.pop()??"";
+          for(const line of lines){
+            if(!line.startsWith("data: "))continue;
+            const txt=line.slice(6).trim();if(!txt)continue;
+            let ev;try{ev=JSON.parse(txt);}catch{continue;}
+            if(ev.type==="ping")continue;
+            finalData=ev;break outer;
+          }
         }
-      }
-    }finally{clearInterval(idleTimer);reader.cancel().catch(()=>{});}
+      }finally{clearInterval(idleTimer);reader.cancel().catch(()=>{});}
+    }else{
+      // ── JSON 兼容模式（后端未升级 SSE 或缓存了旧版前端时的回退路径）──
+      finalData=await res.json().catch(()=>null);
+    }
 
     removeTypingIndicator();clearTip();
 
@@ -2590,10 +2598,7 @@ async function sendChatMessage(){
     state.session=sess;
     renderChatMessages();
   }catch(e){
-    const isIdle=String(e).includes("idle");
-    showChatError(isIdle
-      ?"等待超时（45 秒内无响应），服务器可能仍在处理，请稍等后重试。"
-      :"网络错误："+String(e)+"（请检查网络后重试）");
+    showChatError("网络错误："+String(e)+"（请检查网络后重试）");
   }finally{
     state.chatSending=false;
     chatSendBtn.disabled=false;

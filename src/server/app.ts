@@ -63,7 +63,14 @@ export function createApp(params: { logger: AppLogger }) {
     params.logger.warn("ADMIN_PATH_TOKEN not set — admin panel disabled");
   }
 
-  app.use("/", express.static(webDir));
+  // HTML 页面禁止缓存，确保部署后用户立即获取最新版本；其他静态资源正常缓存
+  app.use("/", (req, res, next) => {
+    if (req.path === "/" || req.path.endsWith(".html")) {
+      res.setHeader("Cache-Control", "no-cache, no-store, must-revalidate");
+      res.setHeader("Pragma", "no-cache");
+    }
+    next();
+  }, express.static(webDir));
 
   // 统一错误处理应放在最后
   app.use(errorHandler(params.logger));
