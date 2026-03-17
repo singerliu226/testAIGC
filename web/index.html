@@ -2980,6 +2980,7 @@ function resumeJobPolling(sessionId,jobId){
         state.selected=new Set(riskyIds);
         activeFilter=riskyIds.length>0?"medium":"all";
         render();
+        updateSelectionUI(); // rewriteToTargetBtn 在 HTML 中默认 disabled，必须在 sessionId 就绪后手动启用
         // 若有未完成的改写任务，恢复轮询
         const job=sess.autoRewriteJob;
         if(job&&(job.status==="running"||job.status==="queued")){
