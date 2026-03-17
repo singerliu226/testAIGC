@@ -200,6 +200,34 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
 .progress-wrap.visible{display:block}
 .progress-bar{height:100%;background:var(--pri);border-radius:999px;transition:width .4s ease-out}
 
+/* ── 步骤指示器 ── */
+.step-bar{display:flex;align-items:center;justify-content:center;gap:0;padding:10px 0 8px;background:white;border-bottom:1px solid var(--g100);position:sticky;top:56px;z-index:40}
+.step-item{display:flex;align-items:center;gap:6px;font-size:12px;color:var(--g400);white-space:nowrap;padding:0 4px}
+.step-dot{width:20px;height:20px;border-radius:50%;display:flex;align-items:center;justify-content:center;font-size:10px;font-weight:700;flex-shrink:0;border:1.5px solid var(--g300);background:white;color:var(--g400);transition:.25s}
+.step-item.done .step-dot{background:var(--ok);border-color:var(--ok);color:white}
+.step-item.active .step-dot{background:var(--pri);border-color:var(--pri);color:white;box-shadow:0 0 0 3px var(--pri-l)}
+.step-item.done{color:var(--g500)}
+.step-item.active{color:var(--pri);font-weight:600}
+.step-sep{width:28px;height:1px;background:var(--g200);flex-shrink:0;transition:.25s}
+.step-sep.done{background:var(--ok)}
+@media(max-width:520px){.step-bar{gap:0}.step-item span{display:none}.step-sep{width:16px}}
+
+/* ── 等待期间动态提示 ── */
+.loading-tips{text-align:center;font-size:12px;color:var(--g400);margin-top:10px;min-height:18px;transition:opacity .4s}
+.loading-tips.hidden{opacity:0}
+
+/* ── 降重方式引导卡 ── */
+.method-guide{border:1px solid var(--pri-l);background:linear-gradient(135deg,var(--pri-l) 0%,#fff 100%);border-radius:var(--radius);margin-top:16px;overflow:hidden}
+.method-guide-header{display:flex;align-items:center;gap:8px;padding:12px 16px 10px;font-weight:600;font-size:14px;color:var(--pri)}
+.method-guide-grid{display:grid;grid-template-columns:1fr 1fr;gap:0;border-top:1px solid #dde0ff}
+.method-col{padding:12px 14px}
+.method-col:first-child{border-right:1px solid #dde0ff}
+.method-col-title{font-weight:700;font-size:13px;margin-bottom:8px;display:flex;align-items:center;gap:6px}
+.method-row{display:flex;align-items:flex-start;gap:6px;font-size:12px;color:var(--g600);margin-bottom:5px;line-height:1.5}
+.method-row svg{flex-shrink:0;margin-top:2px}
+.method-guide-dismiss{float:right;font-size:11px;color:var(--g400);cursor:pointer;padding:2px 4px;border-radius:4px;transition:.15s}
+.method-guide-dismiss:hover{color:var(--pri);background:var(--pri-l)}
+
 /* ── log console ── */
 .console{font-family:var(--font-mono);font-size:12px;background:var(--g900);color:var(--g300);padding:12px 16px;border-radius:8px;max-height:120px;overflow:auto;white-space:pre-wrap;word-break:break-all;margin-top:16px}
 
@@ -440,6 +468,28 @@ body.sidebar-open .action-bar{margin-right:400px}
   </div>
 </header>
 
+<div class="step-bar" id="stepBar">
+  <div class="step-item active" id="step1">
+    <div class="step-dot" id="step1dot">1</div>
+    <span>上传论文</span>
+  </div>
+  <div class="step-sep" id="sep1"></div>
+  <div class="step-item" id="step2">
+    <div class="step-dot" id="step2dot">2</div>
+    <span>查看检测</span>
+  </div>
+  <div class="step-sep" id="sep2"></div>
+  <div class="step-item" id="step3">
+    <div class="step-dot" id="step3dot">3</div>
+    <span>降重处理</span>
+  </div>
+  <div class="step-sep" id="sep3"></div>
+  <div class="step-item" id="step4">
+    <div class="step-dot" id="step4dot">4</div>
+    <span>下载论文</span>
+  </div>
+</div>
+
 <main class="container">
 
   <!-- ══════ UPLOAD ══════ -->
@@ -510,6 +560,7 @@ body.sidebar-open .action-bar{margin-right:400px}
       </div>
 
       <div class="progress-wrap" id="uploadProgress"><div class="progress-bar" id="uploadProgressBar" style="width:0%"></div></div>
+      <div class="loading-tips hidden" id="loadingTips"></div>
     </div>
   </div>
 
@@ -624,6 +675,43 @@ body.sidebar-open .action-bar{margin-right:400px}
           <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4"/><polyline points="7 10 12 15 17 10"/><line x1="12" y1="15" x2="12" y2="3"/></svg>
           预览并下载论文
         </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ══════ 降重方式引导 ══════ -->
+  <div class="method-guide hidden" id="methodGuide">
+    <div class="method-guide-header">
+      <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>
+      如何降低 AI率？选择最适合你的方式
+      <span class="method-guide-dismiss" id="methodGuideDismiss" title="不再显示">✕</span>
+    </div>
+    <div class="method-guide-grid">
+      <div class="method-col">
+        <div class="method-col-title" style="color:var(--pri)">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
+          一键自动降重
+        </div>
+        <div class="method-row"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>适合：快速处理全部高风险段落</div>
+        <div class="method-row"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>无需手动操作，AI 自动多轮改写</div>
+        <div class="method-row"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--g400)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>约 3–5 分钟完成，消耗约 3积分/段</div>
+        <div style="margin-top:10px">
+          <button class="btn btn-primary btn-sm" onclick="document.getElementById('rewriteToTarget').click();document.getElementById('methodGuide').classList.add('hidden')">
+            立即一键降重 →
+          </button>
+        </div>
+      </div>
+      <div class="method-col">
+        <div class="method-col-title" style="color:#7c3aed">
+          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#7c3aed" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
+          帮我改（逐段对话）
+        </div>
+        <div class="method-row"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>适合：精细控制某段改写方向</div>
+        <div class="method-row"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--ok)" stroke-width="2.5"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>可指定保留特定信息、数据引用</div>
+        <div class="method-row"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="var(--g400)" stroke-width="2"><circle cx="12" cy="12" r="10"/><line x1="12" y1="8" x2="12" y2="12"/><line x1="12" y1="16" x2="12.01" y2="16"/></svg>每段约 15–40 秒，约 1积分/次</div>
+        <div style="margin-top:10px;font-size:12px;color:var(--g500)">
+          点击段落详情表格中"帮我改"按钮即可开始
+        </div>
       </div>
     </div>
   </div>
@@ -931,7 +1019,69 @@ const verdictIcon=$("verdictIcon"),verdictTitle=$("verdictTitle"),verdictDesc=$(
 const tabFilter=$("tabFilter"),countAll=$("countAll"),countMedium=$("countMedium"),countHigh=$("countHigh");
 const chatSidebar=$("chatSidebar"),chatCloseBtn=$("chatClose"),chatParaLabel=$("chatParaLabel"),chatParaPreview=$("chatParaPreview"),chatSuggestionsEl=$("chatSuggestions"),chatMessagesEl=$("chatMessages"),chatInput=$("chatInput"),chatSendBtn=$("chatSend");
 const actionBarToggleBtn=$("actionBarToggle"),actionBarToggleIcon=$("actionBarToggleIcon"),actionBarToggleLabel=$("actionBarToggleLabel");
+const methodGuide=$("methodGuide"),methodGuideDismiss=$("methodGuideDismiss"),loadingTipsEl=$("loadingTips");
 let activeFilter="medium";
+
+// ── 步骤指示器 ──
+// step: 1=上传中/未上传, 2=已检测, 3=已降重, 4=可下载
+function updateStepper(step){
+  const steps=[1,2,3,4];
+  steps.forEach(i=>{
+    const el=$("step"+i),dot=$("step"+i+"dot");
+    if(!el)return;
+    el.classList.remove("done","active");
+    $("sep"+(i)).classList.remove("done");
+    if(i<step){el.classList.add("done");dot.innerHTML='<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>';}
+    else if(i===step){el.classList.add("active");dot.textContent=String(i);}
+    else{dot.textContent=String(i);}
+    if(i<4&&i<step)$("sep"+i).classList.add("done");
+  });
+}
+updateStepper(1);
+
+// ── 降重方式引导卡 ──
+// 只显示一次（用户关闭后记住偏好）
+const methodGuideKey="aigc_method_guide_dismissed";
+if(!localStorage.getItem(methodGuideKey)){
+  // 检测完成后再显示，通过 showMethodGuide() 调用
+}
+function showMethodGuide(){
+  if(localStorage.getItem(methodGuideKey))return;
+  methodGuide.classList.remove("hidden");
+}
+methodGuideDismiss.addEventListener("click",()=>{
+  methodGuide.classList.add("hidden");
+  localStorage.setItem(methodGuideKey,"1");
+});
+
+// ── 等待期间动态提示 ──
+const loadingTipsList=[
+  "正在解析文档结构，识别段落边界…",
+  "正在分析语言模式，寻找 AI 生成特征…",
+  "检测句式流畅度与词汇多样性…",
+  "对比人类写作与 AI 写作的统计差异…",
+  "正在标注高风险段落，生成检测报告…",
+  "几乎所有段落均已分析完毕，即将呈现结果…",
+];
+let _tipTimer=null,_tipIdx=0;
+function startLoadingTips(){
+  _tipIdx=0;
+  loadingTipsEl.classList.remove("hidden");
+  loadingTipsEl.textContent=loadingTipsList[0];
+  clearInterval(_tipTimer);
+  _tipTimer=setInterval(()=>{
+    _tipIdx=(_tipIdx+1)%loadingTipsList.length;
+    loadingTipsEl.classList.add("hidden");
+    setTimeout(()=>{
+      loadingTipsEl.textContent=loadingTipsList[_tipIdx];
+      loadingTipsEl.classList.remove("hidden");
+    },400);
+  },3500);
+}
+function stopLoadingTips(){
+  clearInterval(_tipTimer);_tipTimer=null;
+  loadingTipsEl.classList.add("hidden");
+}
 
 // ── 操作栏折叠/展开 ──
 // 默认展开，仅在用户主动点击时折叠，不持久化状态
@@ -1359,6 +1509,28 @@ function render(){
 
   recheckBtn.disabled=!state.sessionId;
 
+  // ── 步骤指示器更新 ──
+  {
+    const hasDownload=!!state.session?.revised&&Object.keys(state.session.revised||{}).length>0;
+    if(hasDownload&&scoreInt<=15){
+      // 已降重且达标 → 第4步（下载）
+      updateStepper(4);
+    }else if(hasRevised){
+      // 已做过降重但未达标 → 第3步（降重中）
+      updateStepper(3);
+    }else{
+      // 只检测了 → 第2步
+      updateStepper(2);
+    }
+    // 方式引导：如果还没降过重且AI率>15%，保持显示
+    if(!hasRevised&&scoreInt>15){
+      // 不在这里 show，由成功上传时 showMethodGuide() 决定是否首次展示
+    }else if(hasRevised){
+      // 已开始降重，隐藏引导
+      methodGuide.classList.add("hidden");
+    }
+  }
+
   limitationsEl.innerHTML="";
   ((rb&&rb.limitations)||[]).forEach(x=>{const li=document.createElement("li");li.textContent=x;limitationsEl.appendChild(li)});
 
@@ -1553,6 +1725,8 @@ uploadBtn.addEventListener("click",async()=>{
   closeChat();
   state={sessionId:null,session:null,selected:new Set(),chatParagraphId:null,chatSending:false};
   uploadProgress.classList.add("visible");uploadProgressBar.style.width="10%";
+  startLoadingTips();updateStepper(1);
+  methodGuide.classList.add("hidden");
   dropTitle.textContent="正在解析文档并检测 AI 痕迹…";
   // 根据文件体积动态给出等待预期，文件越大（图片越多）解析越慢
   const fMB=f.size/1024/1024;
@@ -1581,12 +1755,14 @@ uploadBtn.addEventListener("click",async()=>{
       syncExportButtons(`/api/export/${encodeURIComponent(json.sessionId)}`,false);
       const sess=await fetchSession(json.sessionId);state.session=sess;
       uploadProgressBar.style.width="100%";
+      stopLoadingTips();
       setTimeout(()=>uploadProgress.classList.remove("visible"),500);
       const rb=sess.reportBefore;
       const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
       state.selected=new Set(riskyIds);
       activeFilter=riskyIds.length>0?"medium":"all";
       render();
+      updateStepper(2);showMethodGuide();
       // LLM 复核/英文检测在后台进行，轮询刷新结果
       if(json.judgeStatus==="pending"){
         const isEn=json.isEnglish===true;
@@ -1632,7 +1808,7 @@ uploadBtn.addEventListener("click",async()=>{
     }else{
       showToast("上传失败："+msg,"err",5000);
     }
-    uploadProgress.classList.remove("visible");
+    uploadProgress.classList.remove("visible");stopLoadingTips();
   }finally{
     uploadBtn.disabled=false;
     dropTitle.textContent="拖拽或点击上传 .docx 文件（支持 .doc）";
@@ -1705,6 +1881,8 @@ uploadTextBtn.addEventListener("click",async()=>{
   closeChat();
   state={sessionId:null,session:null,selected:new Set(),chatParagraphId:null,chatSending:false};
   uploadProgress.classList.add("visible");uploadProgressBar.style.width="10%";
+  startLoadingTips();updateStepper(1);
+  methodGuide.classList.add("hidden");
   dropTitle.textContent="正在分析文字内容并检测 AI 痕迹…";
   // 根据文字量给出等待预期
   const chars=txt.length;
@@ -1722,14 +1900,14 @@ uploadTextBtn.addEventListener("click",async()=>{
     const json=await res.json();
     // 积分不足（免费额度已耗尽且积分余额不足）
     if(!json.ok&&json.error==="INSUFFICIENT_POINTS"){
-      uploadProgress.classList.remove("visible");
+      uploadProgress.classList.remove("visible");stopLoadingTips();
       updateQuotaBar(0);
       showToast(`积分不足：本次检测需 ${json.pointsNeeded??'若干'} 积分，当前余额 ${json.balance??0} 积分。请先充值后再使用文字检测。`,"err",8000);
       return;
     }
     // 兼容旧版：免费额度用完但后端未升级时的 402（理论上不再触发）
     if(!json.ok&&json.error==="FREE_TEXT_QUOTA_EXCEEDED"){
-      uploadProgress.classList.remove("visible");
+      uploadProgress.classList.remove("visible");stopLoadingTips();
       updateQuotaBar(json.freeRemaining??0);
       showToast("文字检测免费额度已用完，积分也不足，请充值后继续","warn",6000);
       return;
@@ -1745,12 +1923,14 @@ uploadTextBtn.addEventListener("click",async()=>{
       syncExportButtons(`/api/export/${encodeURIComponent(json.sessionId)}`,false);
       const sess=await fetchSession(json.sessionId);state.session=sess;
       uploadProgressBar.style.width="100%";
+      stopLoadingTips();
       setTimeout(()=>uploadProgress.classList.remove("visible"),500);
       const rb=sess.reportBefore;
       const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
       state.selected=new Set(riskyIds);
       activeFilter=riskyIds.length>0?"medium":"all";
       render();
+      updateStepper(2);showMethodGuide();
       // 成功后折叠粘贴区
       textFallbackBody.classList.add("hidden");
       textFallbackArrow.classList.remove("open");
@@ -1778,7 +1958,7 @@ uploadTextBtn.addEventListener("click",async()=>{
       }
     }else{
       showToast("检测失败："+(json.message||json.error||"未知错误"),"err",5000);
-      uploadProgress.classList.remove("visible");
+      uploadProgress.classList.remove("visible");stopLoadingTips();
     }
   }catch(e){
     clearTimeout(timer2);clearInterval(pTimer2);
@@ -1788,7 +1968,7 @@ uploadTextBtn.addEventListener("click",async()=>{
     }else{
       showToast("上传失败："+msg,"err",5000);
     }
-    uploadProgress.classList.remove("visible");
+    uploadProgress.classList.remove("visible");stopLoadingTips();
   }finally{
     uploadTextBtn.disabled=false;
     dropTitle.textContent="拖拽或点击上传 .docx 文件";
