@@ -1204,7 +1204,7 @@ function openRewriteConfirm(){
     notices.push(`<div class="rw-confirm-safe"><span class="rw-confirm-icon">✅</span><div><strong>原文已备份</strong>：改写后可随时在段落详情中对比原文与修改版本，并支持手动还原。</div></div>`);
     // 再次改写警告
     if(isRerun){
-      notices.push(`<div class="rw-confirm-warn"><span class="rw-confirm-icon">⚠️</span><div><strong>这是第 ${(sess.revision||0)+1} 次自动降重</strong>：已有 ${alreadyRevised} 个段落经过改写。本次将针对仍偏高的段落继续尝试，但随着改写次数增加，<strong>效果可能逐渐递减</strong>。建议结合"建议"栏手动修改效果更佳。</div></div>`);
+      notices.push(`<div class="rw-confirm-warn"><span class="rw-confirm-icon">⚠️</span><div><strong>这是第 ${(state.session?.revision||0)+1} 次自动降重</strong>：已有 ${alreadyRevised} 个段落经过改写。本次将针对仍偏高的段落继续尝试，但随着改写次数增加，<strong>效果可能逐渐递减</strong>。建议结合"建议"栏手动修改效果更佳。</div></div>`);
     }
     // 顽固段落警告
     if(stubbornSkipped>0){
@@ -1437,7 +1437,7 @@ function render(){
         ${sigs?`<div class="signal-list">${sigs}</div>`:""}
         <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
           ${(hasRw||sigs)?`<button class="btn btn-outline btn-sm" data-toggle="${escapeHtml(pid)}">${hasRw?"查看修改":"查看详情"}</button>`:""}
-          ${hasRw?`<button class="btn btn-outline btn-sm" data-rerw="${escapeHtml(r.paragraphId)}">重新修改</button>`:""}
+          ${hasRw?`<button class="btn btn-outline btn-sm" data-rerw="${escapeHtml(r.paragraphId)}">继续修改</button>`:""}
           <button class="btn btn-primary btn-sm" data-chat="${escapeHtml(r.paragraphId)}">
             <svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15a2 2 0 01-2 2H7l-4 4V5a2 2 0 012-2h14a2 2 0 012 2z"/></svg>
             帮我改
@@ -2034,9 +2034,11 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
         stopPolling();
         cancelBtn.style.display="none";
         const em=job.error?.message||"任务失败";
+        rwProgressFill.style.background="var(--err)";
         rwProgressText.textContent=`失败：${em}`;
-        showToast("自动降分失败："+em,"err",8000);
+        showToast("自动降分失败："+em+"。可尝试重新点击「一键自动降重」。","err",10000);
         queue.running=false;
+        rewriteToTargetBtn.disabled=false;
         updateSelectionUI();
         return;
       }
@@ -2377,12 +2379,30 @@ function openPreview(){
   previewModal.classList.add("open");
 }
 
-historyBody.addEventListener("click",async e=>{const t=e.target;if(!t?.dataset?.load)return;const sid=t.dataset.load;const sess=await fetchSession(sid);if(!sess.ok)return log(sess);state.sessionId=sid;state.session=sess;localStorage.setItem(lastSessionKey,sid);syncExportButtons(`/api/export/${encodeURIComponent(sid)}`,true);historyModal.classList.remove("open");render()});
+historyBody.addEventListener("click",async e=>{
+  const t=e.target;if(!t?.dataset?.load)return;const sid=t.dataset.load;
+  try{
+    const sess=await fetchSession(sid);
+    if(!sess||sess.ok===false){showToast("加载历史记录失败：会话数据已过期或不存在","warn",4000);return;}
+    state.sessionId=sid;state.session=sess;localStorage.setItem(lastSessionKey,sid);
+    const hasRevised=Boolean(sess.revised&&Object.keys(sess.revised).length);
+    syncExportButtons(`/api/export/${encodeURIComponent(sid)}`,hasRevised);
+    historyModal.classList.remove("open");render();
+    showToast("已恢复历史会话","ok",2000);
+  }catch(e){showToast("加载历史记录失败："+String(e),"err",4000);}
+});
 
 recheckBtn.addEventListener("click",async()=>{
   if(!state.sessionId)return;recheckBtn.disabled=true;
-  try{const res=await fetch(`/api/recheck/${encodeURIComponent(state.sessionId)}`,{method:"POST",headers:getHeaders(),body:"{}"});const json=await res.json();log(json);const sess=await fetchSession(state.sessionId);state.session=sess;render()}
-  catch(e){log(String(e))}finally{recheckBtn.disabled=false}
+  recheckBtn.textContent="检测中…";
+  try{
+    const res=await fetch(`/api/recheck/${encodeURIComponent(state.sessionId)}`,{method:"POST",headers:getHeaders(),body:"{}"});
+    const json=await res.json();log(json);
+    if(!json.ok){showToast("重新检测失败："+(json.error?.message||json.message||"未知错误"),"err",5000);return;}
+    const sess=await fetchSession(state.sessionId);state.session=sess;render();
+    showToast("重新检测完成，结果已更新","ok",3000);
+  }catch(e){showToast("重新检测失败："+String(e),"err",5000);}
+  finally{recheckBtn.disabled=false;recheckBtn.innerHTML='<svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M1 4v6h6M23 20v-6h-6"/><path d="M20.49 9A9 9 0 005.64 5.64L1 10m22 4l-4.64 4.36A9 9 0 013.51 15"/></svg> 重新检测';}
 });
 
 document.addEventListener("click",e=>{
@@ -2398,7 +2418,7 @@ document.addEventListener("click",e=>{
     else if(view==="after")body.textContent=hasRewrite?aTxt:"（尚未改写）";
     else body.innerHTML=hasRewrite?diffHtml(bTxt,aTxt):`<span style="color:var(--g400)">尚未改写，无对比内容</span>`;
   }
-  if(t.dataset?.rerw){state.selected=new Set([t.dataset.rerw]);render();rewriteBtn.click()}
+  if(t.dataset?.rerw){openChat(t.dataset.rerw)}
   const chatBtn=t.closest?.("[data-chat]");
   if(chatBtn)openChat(chatBtn.dataset.chat);
 });
@@ -2622,7 +2642,7 @@ async function applyChatRewrite(messageId){
     });
     const json=await res.json();
     if(!json.ok){
-      alert("替换失败："+(json.error?.message||json.message||"未知错误"));
+      showToast("替换失败："+(json.error?.message||json.message||"未知错误"),"err",5000);
       return;
     }
     const sess=await fetchSession(state.sessionId);
@@ -2630,6 +2650,7 @@ async function applyChatRewrite(messageId){
     syncExportButtons(json.exportUrl||_exportHref,true);
     render();
     renderChatMessages();
+    showToast("已替换原文，AI率已重新计算","ok",3000);
     if(state.chatParagraphId){
       const p=(state.session.paragraphs||[]).find(x=>x.id===state.chatParagraphId);
       if(p){
@@ -2637,7 +2658,7 @@ async function applyChatRewrite(messageId){
         chatParaPreview.textContent=currentText.length>200?currentText.slice(0,200)+"…":currentText;
       }
     }
-  }catch(e){alert("网络错误："+String(e))}
+  }catch(e){showToast("网络错误："+String(e),"err",5000)}
 }
 
 chatCloseBtn.addEventListener("click",closeChat);
@@ -2721,6 +2742,11 @@ function resumeJobPolling(sessionId,jobId){
           else showToast("自动降分完成（刷新前启动的任务）","ok",5000);
         }
         else if(job.status==="failed")showToast("自动降分失败（刷新前启动的任务）","err",5000);
+        else if(job.status==="cancelled"){
+          const sc=Number(p.succeeded||0);
+          if(sc>0)showToast(`自动降分已停止，${sc} 段改写结果已保存（刷新前的任务）`,"ok",5000);
+          else showToast("自动降分已取消（刷新前的任务）","warn",4000);
+        }
       }
     }catch(e){clearInterval(t);}
   },2000);
