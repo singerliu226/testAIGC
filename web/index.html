@@ -1030,11 +1030,12 @@ function updateStepper(step){
     const el=$("step"+i),dot=$("step"+i+"dot");
     if(!el)return;
     el.classList.remove("done","active");
-    $("sep"+(i)).classList.remove("done");
+    const sep=$("sep"+i);
+    if(sep)sep.classList.remove("done");
     if(i<step){el.classList.add("done");dot.innerHTML='<svg width="10" height="10" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="3"><path d="M20 6L9 17l-5-5"/></svg>';}
     else if(i===step){el.classList.add("active");dot.textContent=String(i);}
     else{dot.textContent=String(i);}
-    if(i<4&&i<step)$("sep"+i).classList.add("done");
+    if(sep&&i<step)sep.classList.add("done");
   });
 }
 updateStepper(1);
