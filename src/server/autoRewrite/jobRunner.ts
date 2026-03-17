@@ -106,12 +106,15 @@ export async function runAutoRewriteJob(params: {
    * 单段改写最长等待时间（ms）。
    *
    * 设计原因：
-   * - 原值 90s 导致最坏 20批 × 90s = 30分钟（与生产卡住现象完全吻合）；
-   * - LLM 正常响应 10-22s，25s 超时 × 最多 3次串行 = 75s，但 chatJson 超时后现在不再降级；
-   * - 35s 能覆盖"正常最慢调用（22s）+ 网络抖动（13s）"，同时确保批次在 35s 内结束；
-   * - 最坏情况：60段 / 3并发 = 20批 × 35s = 约 12分钟（相较于原 30分钟，降幅 60%）。
+   * - rewriteOneInternal 最多执行 3 次串行 LLM 调用（aggressive → repair → sanitize 兜底）；
+   * - 每次 LLM 调用超时 25s（LLM_TIMEOUT_MS），3次串行最坏需 75s；
+   * - 35s 时大量段落仅完成 1 次 LLM 调用就超时，guard 未通过的段落无法进入 repair，
+   *   导致批量段落以 BATCH_ERROR 计入失败（实测失败率 83-100%）；
+   * - 恢复为 90s，覆盖 3次 × 25s + 网络抖动，保证 repair 阶段有足够时间；
+   * - 心跳机制已替代 AbortController，防止前端/管理员误判为卡死；
+   * - 最坏情况：60段 / 3并发 = 20批 × 90s = 约 30分钟，受 JOB_MAX_DURATION_MS=25min 兜底收尾。
    */
-  const SEGMENT_TIMEOUT_MS = 35_000;
+  const SEGMENT_TIMEOUT_MS = 90_000;
 
   /** 整个 job 的最长运行时间（ms）。超过后自动收尾，避免长期占用服务器资源。 */
   const JOB_MAX_DURATION_MS = 25 * 60 * 1000; // 25 分钟

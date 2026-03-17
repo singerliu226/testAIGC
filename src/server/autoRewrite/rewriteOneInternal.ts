@@ -153,15 +153,24 @@ export async function rewriteOneInternal(params: {
     const sim1 = bigramJaccardSimilarity(params.paragraph.text, attempt1.revisedText);
     const riskAfter1 = safeParagraphRiskScore(attempt1.revisedText, params.paragraph);
 
-    // 重试条件：护栏不合规 / 改动太小（相似度>0.92）/ 降分不足 15 分
-    const needsRetry = !guard1.ok || sim1 >= 0.92 || riskAfter1 >= params.riskBefore - 15;
-
     chosen = attempt1;
     chosenSim = sim1;
     chosenRiskAfter = riskAfter1;
 
-    if (!needsRetry) {
-      // attempt1 已足够，直接返回
+    /**
+     * 重试策略（精简版）：
+     * 只有护栏失败（模型新增了事实锚点）才进入 aggressive/repair 重试流程。
+     *
+     * 设计原因：
+     * - 旧逻辑同时在"改动太小（sim>=0.92）"或"降分不足15分"时也触发重试；
+     * - rewriteOneInternal 最多 3 次串行 LLM 调用，配合 SEGMENT_TIMEOUT_MS=90s 才够用；
+     * - 在 35s 段落超时下，attempt1 一旦花费 12s+，attempt2/3 必然超时，段落整体失败；
+     * - 实测 83-100% 失败率的根本原因：guard 通过但 sim/risk 触发重试 → 超时 → BATCH_ERROR；
+     * - 调整后：guard 通过即认为改写可用（哪怕改动保守），多轮运行累积降分；
+     *   guard 失败才说明内容造假，必须重试修复，此时 90s 充裕覆盖 3×25s。
+     */
+    if (guard1.ok) {
+      // attempt1 通过了真实性护栏，直接接受（保守改写好过 BATCH_ERROR）
       return buildSuccess();
     }
 
