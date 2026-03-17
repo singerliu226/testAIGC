@@ -1,9 +1,11 @@
 import type { Router } from "express";
 import { z } from "zod";
+import { randomUUID } from "node:crypto";
 import { asyncHandler } from "../asyncHandler.js";
 import { HttpError } from "../../errors.js";
 import {
   auditLog,
+  getAccountIdFromRequestHeader,
   getDefaultFreePoints,
   isAdminRequest,
   ledger,
@@ -14,8 +16,10 @@ import {
 import { adminActionLimiter, adminLoginLimiter } from "../../rateLimit.js";
 import { buildUsageReport } from "../../../billing/usageReport.js";
 import type { SessionStore } from "../../sessionStore.js";
+import type { AppLogger } from "../../../logger/index.js";
+import { runAutoRewriteJob } from "../../autoRewrite/jobRunner.js";
 
-export function registerAdminRoutes(params: { router: Router; store: SessionStore }) {
+export function registerAdminRoutes(params: { router: Router; logger: AppLogger; store: SessionStore }) {
   const router = params.router;
 
   // ══════════════════════════════════════════════════════
@@ -189,8 +193,193 @@ export function registerAdminRoutes(params: { router: Router; store: SessionStor
     })
   );
 
+  /**
+   * 管理员重置 session 的任务状态：清除 autoRewriteJob，让用户可以重新发起。
+   *
+   * 适用场景：
+   * - 任务卡死（running 但进度长时间不动）；
+   * - 任务 failed 后用户无法发起新任务（因旧 job 仍占位）。
+   * 已改写的段落（revised）保留，不丢用户已有成果。
+   */
+  router.post(
+    "/admin/reset-job/:sessionId",
+    adminActionLimiter,
+    asyncHandler(async (req, res) => {
+      if (!isAdminRequest(req.header("x-admin-secret"))) {
+        throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
+      }
+      const clientIp = req.headers["x-forwarded-for"]
+        ? String(req.headers["x-forwarded-for"]).split(",")[0].trim()
+        : (req.socket.remoteAddress ?? "unknown");
+
+      const sessionId = String(req.params.sessionId);
+      const session = params.store.get(sessionId);
+      if (!session) {
+        throw new HttpError(404, "NOT_FOUND", `Session 不存在: ${sessionId}`);
+      }
+
+      const oldStatus = session.autoRewriteJob?.status ?? "无任务";
+      params.store.update(sessionId, { autoRewriteJob: undefined });
+
+      auditLog.record(clientIp, "ADMIN_RESET_JOB", {
+        sessionId,
+        oldStatus,
+        filename: session.filename,
+      });
+
+      res.json({
+        ok: true,
+        sessionId,
+        message: `已重置任务状态（原状态: ${oldStatus}），用户现在可以重新发起降重`,
+      });
+    })
+  );
+
+  /**
+   * 管理员为用户重新启动自动降重任务。
+   *
+   * 适用场景：
+   * - 用户报告任务卡住，管理员一键帮用户重跑；
+   * - 避免用户因不理解界面状态而反复操作。
+   *
+   * 流程：清除旧 job → 用默认参数启动新 job → 返回新 jobId。
+   */
+  router.post(
+    "/admin/restart-job/:sessionId",
+    adminActionLimiter,
+    asyncHandler(async (req, res) => {
+      if (!isAdminRequest(req.header("x-admin-secret"))) {
+        throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
+      }
+      const clientIp = req.headers["x-forwarded-for"]
+        ? String(req.headers["x-forwarded-for"]).split(",")[0].trim()
+        : (req.socket.remoteAddress ?? "unknown");
+
+      const sessionId = String(req.params.sessionId);
+      const session = params.store.get(sessionId);
+      if (!session) {
+        throw new HttpError(404, "NOT_FOUND", `Session 不存在: ${sessionId}`);
+      }
+      if (!session.paragraphs?.length) {
+        throw new HttpError(400, "NO_PARAGRAPHS", "该会话没有可改写段落");
+      }
+      if (!session.reportBefore) {
+        throw new HttpError(400, "NO_REPORT", "该会话还未完成检测，无法启动降重");
+      }
+
+      const oldStatus = session.autoRewriteJob?.status ?? "无任务";
+      const accountId = session.accountId;
+      ledger.ensureAccount(accountId, getDefaultFreePoints());
+
+      const body = z
+        .object({
+          targetScore: z.number().int().min(0).max(100).optional().default(15),
+          maxRounds: z.number().int().min(1).max(20).optional().default(6),
+          perRound: z.number().int().min(1).max(200).optional().default(8),
+          maxTotal: z.number().int().min(1).max(500).optional().default(30),
+          minParagraphScore: z.number().int().min(0).max(100).optional().default(35),
+          maxPerParagraph: z.number().int().min(1).max(5).optional().default(2),
+          stopNoImproveRounds: z.number().int().min(1).max(10).optional().default(2),
+          allowFactRisk: z.boolean().optional().default(false),
+        })
+        .parse(req.body ?? {});
+
+      const jobId = randomUUID();
+      const now = Date.now();
+      params.store.update(sessionId, {
+        autoRewriteJob: {
+          jobId,
+          status: "queued",
+          createdAt: now,
+          updatedAt: now,
+          params: body,
+          progress: { roundsUsed: 0, processed: 0, maxTotal: body.maxTotal, lastMessage: "管理员重新启动…" },
+        },
+      });
+
+      void runAutoRewriteJob({
+        store: params.store,
+        logger: params.logger,
+        sessionId,
+        accountId,
+        isAdmin: true,
+        jobId,
+        body,
+        deps: {},
+      });
+
+      auditLog.record(clientIp, "ADMIN_RESTART_JOB", {
+        sessionId,
+        oldStatus,
+        newJobId: jobId,
+        filename: session.filename,
+        accountId: accountId.slice(0, 8) + "…",
+      });
+
+      res.json({
+        ok: true,
+        sessionId,
+        jobId,
+        message: `已为用户重新启动降重任务（原状态: ${oldStatus}），新 jobId: ${jobId.slice(0, 8)}…`,
+        statusUrl: `/api/rewrite-to-target/${encodeURIComponent(sessionId)}/status/${encodeURIComponent(jobId)}`,
+      });
+    })
+  );
+
+  /**
+   * 管理员查看需要干预的 session：卡住（running 超过 3 分钟且 0 进度）、failed、cancelled。
+   * 用于在管理员面板中快速发现问题会话并进行操作。
+   */
+  router.get(
+    "/admin/stuck-jobs",
+    adminActionLimiter,
+    asyncHandler(async (req, res) => {
+      if (!isAdminRequest(req.header("x-admin-secret"))) {
+        throw new HttpError(403, "FORBIDDEN", "需要管理员权限");
+      }
+
+      const now = Date.now();
+      const STUCK_THRESHOLD_MS = 3 * 60 * 1000;
+      const allSessions = params.store.listAllForAdmin();
+
+      const stuckJobs = allSessions
+        .filter((s) => {
+          const job = s.autoRewriteJob;
+          if (!job) return false;
+          if (job.status === "failed" || job.status === "cancelled") return true;
+          if (job.status === "running") {
+            const elapsed = now - (job.createdAt ?? now);
+            const processed = job.progress?.processed ?? 0;
+            return elapsed > STUCK_THRESHOLD_MS && processed === 0;
+          }
+          return false;
+        })
+        .sort((a, b) => (b.autoRewriteJob?.updatedAt ?? 0) - (a.autoRewriteJob?.updatedAt ?? 0))
+        .slice(0, 50)
+        .map((s) => {
+          const job = s.autoRewriteJob!;
+          const elapsed = now - (job.createdAt ?? now);
+          return {
+            sessionId: s.sessionId,
+            accountIdShort: s.accountId.slice(0, 8) + "…",
+            filename: s.filename,
+            status: job.status,
+            elapsedMs: elapsed,
+            progress: job.progress ?? {},
+            error: (job as any).error ?? null,
+            createdAt: job.createdAt,
+            updatedAt: job.updatedAt,
+            hasRevised: s.hasRevised,
+          };
+        });
+
+      res.json({ ok: true, stuckJobs });
+    })
+  );
+
   // 预留：管理员可直接设置默认赠送积分（当前不开放接口，避免误操作）
   void getDefaultFreePoints;
+  void getAccountIdFromRequestHeader;
 
   /**
    * 管理员活跃看板：实时返回正在运行的改写任务、上传统计和系统内存。

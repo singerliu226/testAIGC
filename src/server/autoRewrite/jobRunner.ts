@@ -317,43 +317,67 @@ export async function runAutoRewriteJob(params: {
           });
         }
 
-        // 并发执行本批次
-        const batchResults = await Promise.allSettled(
-          validBatch.map(async ({ c, p }) => {
-            const baseText = updated[p.id] ?? p.text;
-            const before = paragraphs[p.index - 1]?.text;
-            const after = paragraphs[p.index + 1]?.text;
+        // 心跳：每 15s 更新进度提示，防止管理员面板/前端误判为"卡死"
+        const batchSegIds = validBatch.map((x) => x.p.index + 1).join("、");
+        const heartbeat = setInterval(() => {
+          const sHb = params.store.get(params.sessionId);
+          if (sHb?.autoRewriteJob && sHb.autoRewriteJob.jobId === params.jobId) {
+            const elSec = Math.round((Date.now() - jobStartedAt) / 1000);
+            params.store.update(params.sessionId, {
+              autoRewriteJob: {
+                ...sHb.autoRewriteJob,
+                updatedAt: Date.now(),
+                progress: {
+                  ...sHb.autoRewriteJob.progress,
+                  lastMessage: `第 ${roundsUsed} 轮：正在等待 AI 响应（第 ${batchSegIds} 段，已耗时 ${elSec}s）…`,
+                },
+              },
+            });
+          }
+        }, 15_000);
 
-            /**
-             * 单段超时保护：避免某段 LLM 调用在 Zeabur 代理下 AbortController 失效时无限挂起。
-             * 90s 已足够 3 次串行 LLM 调用各完成一次（正常响应 10-25s），若仍超时则跳过本段继续。
-             */
-            const segmentTimeout = new Promise<never>((_, reject) =>
-              setTimeout(() => reject(new Error(`段落 ${p.index + 1} 改写超时（>${SEGMENT_TIMEOUT_MS / 1000}s），已跳过`)), SEGMENT_TIMEOUT_MS)
-            );
+        let batchResults: PromiseSettledResult<{ p: typeof validBatch[0]["p"]; out: Awaited<ReturnType<typeof rewriteOneInternal>> }>[];
+        try {
+          // 并发执行本批次
+          batchResults = await Promise.allSettled(
+            validBatch.map(async ({ c, p }) => {
+              const baseText = updated[p.id] ?? p.text;
+              const before = paragraphs[p.index - 1]?.text;
+              const after = paragraphs[p.index + 1]?.text;
 
-            const out = await Promise.race([
-              rewriteOneInternal({
-                deps: params.deps,
-                logger: log,
-                sessionId: params.sessionId,
-                accountId: params.accountId,
-                isAdmin: params.isAdmin,
-                type: "auto",
-                paragraph: p,
-                baseText,
-                contextBefore: before,
-                contextAfter: after,
-                // eslint-disable-next-line @typescript-eslint/no-explicit-any
-                signals: (c.signals ?? []) as any,
-                riskBefore: c.riskScore,
-                allowFactRisk: params.body.allowFactRisk,
-              }),
-              segmentTimeout,
-            ]);
-            return { p, out };
-          })
-        );
+              /**
+               * 单段超时保护：避免某段 LLM 调用在 Zeabur 代理下 AbortController 失效时无限挂起。
+               * 90s 已足够 3 次串行 LLM 调用各完成一次（正常响应 10-25s），若仍超时则跳过本段继续。
+               */
+              const segmentTimeout = new Promise<never>((_, reject) =>
+                setTimeout(() => reject(new Error(`段落 ${p.index + 1} 改写超时（>${SEGMENT_TIMEOUT_MS / 1000}s），已跳过`)), SEGMENT_TIMEOUT_MS)
+              );
+
+              const out = await Promise.race([
+                rewriteOneInternal({
+                  deps: params.deps,
+                  logger: log,
+                  sessionId: params.sessionId,
+                  accountId: params.accountId,
+                  isAdmin: params.isAdmin,
+                  type: "auto",
+                  paragraph: p,
+                  baseText,
+                  contextBefore: before,
+                  contextAfter: after,
+                  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+                  signals: (c.signals ?? []) as any,
+                  riskBefore: c.riskScore,
+                  allowFactRisk: params.body.allowFactRisk,
+                }),
+                segmentTimeout,
+              ]);
+              return { p, out };
+            })
+          );
+        } finally {
+          clearInterval(heartbeat);
+        }
 
         // 汇总本批次结果
         for (const r of batchResults) {

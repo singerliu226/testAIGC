@@ -161,6 +161,7 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
     <button class="tab-item" data-tab="codes">兑换码管理</button>
     <button class="tab-item" data-tab="audit">操作审计</button>
     <button class="tab-item" data-tab="activity">活跃看板</button>
+    <button class="tab-item" data-tab="intervention">任务干预</button>
   </div>
 
   <!-- Tab: 账号管理 -->
@@ -267,6 +268,44 @@ body{font-family:var(--font-sans);background:var(--g50);color:var(--g900);line-h
           <tbody id="auditBody"></tbody>
         </table>
         <div class="empty hidden" id="emptyAudit" style="padding:24px;text-align:center;color:var(--g400);font-size:13px">暂无审计记录</div>
+      </div>
+    </div>
+  </div>
+
+  <!-- Tab: 任务干预 -->
+  <div class="tab-panel" id="tabIntervention">
+    <div class="card" style="border-top-left-radius:0;border-top-right-radius:0;border-top:none">
+      <div class="card-header">
+        <span>需要干预的任务</span>
+        <div style="display:flex;gap:8px;align-items:center">
+          <span style="font-size:11px;color:var(--g400)">卡住（0进度超3分钟）/ 失败 / 已取消</span>
+          <button class="btn btn-outline btn-sm" id="refreshStuckBtn">刷新</button>
+        </div>
+      </div>
+      <div class="card-body">
+        <div id="stuckJobList">
+          <div class="activity-empty" id="stuckEmpty">暂无需要干预的任务</div>
+        </div>
+      </div>
+    </div>
+    <div class="card" style="margin-top:16px">
+      <div class="card-header">
+        <span>手动干预指定 Session</span>
+        <span style="font-size:12px;color:var(--g400)">输入 Session ID 直接操作</span>
+      </div>
+      <div class="card-body">
+        <div style="display:flex;gap:8px;align-items:flex-end;flex-wrap:wrap">
+          <div class="form-group" style="flex:1;min-width:200px">
+            <div class="form-label">Session ID</div>
+            <input class="form-input" id="manualSessionId" type="text" placeholder="粘贴 Session ID…" style="width:100%;text-align:left" />
+          </div>
+          <button class="btn btn-outline btn-sm" onclick="adminResetJob($('manualSessionId').value.trim(),this)" style="border-color:var(--warn);color:var(--warn)">🔄 重置任务状态</button>
+          <button class="btn btn-outline btn-sm" onclick="adminRestartJob($('manualSessionId').value.trim(),this)" style="border-color:var(--pri);color:var(--pri)">🚀 重新启动降重</button>
+        </div>
+        <div style="margin-top:10px;font-size:11px;color:var(--g500);line-height:1.6">
+          <strong>重置任务状态</strong>：清除当前任务记录，用户下次打开页面可以自行重新开始降重。已改写的段落保留。<br>
+          <strong>重新启动降重</strong>：立即为用户启动一个新的自动降重任务（使用默认参数），用户刷新页面即可看到进度。
+        </div>
       </div>
     </div>
   </div>
@@ -422,6 +461,7 @@ document.querySelectorAll(".tab-item").forEach(tab=>{
     if(panel)panel.classList.add("active");
     if(tab.dataset.tab==="codes")loadCodes();
     if(tab.dataset.tab==="audit")loadAudit();
+    if(tab.dataset.tab==="intervention")loadStuckJobs();
     if(tab.dataset.tab==="activity"){
       loadActivity();
       // 进入看板时启动 10s 自动刷新
@@ -761,9 +801,10 @@ async function loadActivity(){
           </div>
           ${j.sessionId?`<div style="margin-top:8px;display:flex;align-items:center;justify-content:space-between;gap:8px;flex-wrap:wrap">
             <span style="font-size:10px;color:var(--g400);word-break:break-all">Session: ${j.sessionId}</span>
-            <div style="display:flex;gap:6px;flex-shrink:0">
+            <div style="display:flex;gap:6px;flex-shrink:0;flex-wrap:wrap">
               <button onclick="adminFinishJob('${j.sessionId}','complete',this)" style="font-size:11px;padding:3px 12px;border:1px solid var(--ok);border-radius:4px;background:white;color:var(--ok);cursor:pointer;transition:.15s" onmouseover="this.style.background='var(--ok)';this.style.color='white'" onmouseout="this.style.background='white';this.style.color='var(--ok)'">✅ 强制完成并保存</button>
               <button onclick="adminFinishJob('${j.sessionId}','cancel',this)" style="font-size:11px;padding:3px 10px;border:1px solid var(--err);border-radius:4px;background:white;color:var(--err);cursor:pointer;transition:.15s" onmouseover="this.style.background='var(--err)';this.style.color='white'" onmouseout="this.style.background='white';this.style.color='var(--err)'">⛔ 强制取消</button>
+              <button onclick="adminRestartJob('${j.sessionId}',this)" style="font-size:11px;padding:3px 10px;border:1px solid var(--pri);border-radius:4px;background:white;color:var(--pri);cursor:pointer;transition:.15s" onmouseover="this.style.background='var(--pri)';this.style.color='white'" onmouseout="this.style.background='white';this.style.color='var(--pri)'">🚀 帮用户重启</button>
             </div>
           </div>`:""}
         </div>`;
@@ -815,6 +856,96 @@ async function loadActivity(){
   }catch(e){showToast("活跃看板网络错误","err")}
 }
 refreshActivityBtn.addEventListener("click",loadActivity);
+
+// ── 管理员干预功能 ──
+async function adminResetJob(sessionId, btn){
+  if(!sessionId){showToast("请输入 Session ID","err");return}
+  if(!confirm(`重置任务状态：Session ${sessionId.slice(0,8)}…？\n\n已改写的段落会保留，用户重新打开页面后可以自行发起新的降重。`))return;
+  btn.disabled=true;
+  const orig=btn.textContent;
+  btn.textContent="处理中…";
+  try{
+    const res=await fetch(`/api/admin/reset-job/${encodeURIComponent(sessionId)}`,{method:"POST",headers:adminHeaders()});
+    const json=await res.json();
+    if(json.ok){
+      showToast(json.message||"已重置","ok",4000);
+      loadStuckJobs();
+      loadActivity();
+    }else{
+      showToast(json.error?.message||json.message||"操作失败","err",4000);
+    }
+  }catch(e){showToast("请求失败："+e,"err")}finally{
+    btn.disabled=false;btn.textContent=orig;
+  }
+}
+
+async function adminRestartJob(sessionId, btn){
+  if(!sessionId){showToast("请输入 Session ID","err");return}
+  if(!confirm(`重新启动降重：Session ${sessionId.slice(0,8)}…？\n\n将以管理员身份（不消耗积分）为用户立即启动新的自动降重任务。`))return;
+  btn.disabled=true;
+  const orig=btn.textContent;
+  btn.textContent="启动中…";
+  try{
+    const res=await fetch(`/api/admin/restart-job/${encodeURIComponent(sessionId)}`,{method:"POST",headers:adminHeaders()});
+    const json=await res.json();
+    if(json.ok){
+      showToast(json.message||"已启动","ok",5000);
+      loadStuckJobs();
+      loadActivity();
+    }else{
+      showToast(json.error?.message||json.message||"操作失败","err",4000);
+    }
+  }catch(e){showToast("请求失败："+e,"err")}finally{
+    btn.disabled=false;btn.textContent=orig;
+  }
+}
+
+async function loadStuckJobs(){
+  const list=$("stuckJobList");
+  const empty=$("stuckEmpty");
+  try{
+    const res=await fetch("/api/admin/stuck-jobs",{headers:adminHeaders()});
+    const json=await res.json();
+    if(!json.ok){showToast("加载失败","err");return}
+    const jobs=json.stuckJobs||[];
+    if(!jobs.length){
+      list.innerHTML='<div class="activity-empty">暂无需要干预的任务 ✅</div>';
+      return;
+    }
+    list.innerHTML=jobs.map(j=>{
+      const statusMap={running:"🔴 卡住",failed:"❌ 失败",cancelled:"⚪ 已取消"};
+      const statusLabel=statusMap[j.status]||j.status;
+      const elSec=Math.floor((j.elapsedMs||0)/1000);
+      const elStr=elSec>=60?`${Math.floor(elSec/60)}分${elSec%60}秒`:`${elSec}秒`;
+      const pct=j.progress.maxTotal>0?Math.round((j.progress.processed||0)/j.progress.maxTotal*100):0;
+      const errMsg=j.error?`<div style="margin-top:4px;padding:4px 8px;background:var(--err-bg);border-radius:4px;font-size:11px;color:var(--err)">${esc(j.error.message||j.error.code||"未知错误")}</div>`:"";
+      const lastMsg=j.progress.lastMessage?`<div style="margin-top:2px;font-size:11px;color:var(--g400)">${esc(j.progress.lastMessage)}</div>`:"";
+      return `<div class="job-card" style="border-color:${j.status==="running"?"var(--err)":j.status==="failed"?"var(--warn)":"var(--g200)"}">
+        <div class="job-card-header">
+          <span class="job-filename" title="${esc(j.filename)}">${esc(j.filename)}</span>
+          <span style="font-size:12px;font-weight:600;color:${j.status==="running"?"var(--err)":"var(--g500)"}">${statusLabel}</span>
+        </div>
+        <div class="job-meta">
+          <span>进度 ${j.progress.processed||0} / ${j.progress.maxTotal||0} 段（${pct}%）</span>
+          <span>已耗时 ${esc(elStr)}</span>
+          <span style="color:var(--g400)">账号 ${esc(j.accountIdShort)}</span>
+          ${j.hasRevised?'<span style="color:var(--ok)">有已保存的改写</span>':""}
+        </div>
+        ${lastMsg}
+        ${errMsg}
+        <div style="margin-top:8px;display:flex;gap:6px;flex-wrap:wrap">
+          <button onclick="adminResetJob('${j.sessionId}',this)" class="btn btn-outline btn-sm" style="border-color:var(--warn);color:var(--warn)">🔄 重置（用户自行重来）</button>
+          <button onclick="adminRestartJob('${j.sessionId}',this)" class="btn btn-outline btn-sm" style="border-color:var(--pri);color:var(--pri)">🚀 帮用户重新启动</button>
+          ${j.status==="running"?`<button onclick="adminFinishJob('${j.sessionId}','complete',this)" class="btn btn-outline btn-sm" style="border-color:var(--ok);color:var(--ok)">✅ 强制完成并保存</button>
+          <button onclick="adminFinishJob('${j.sessionId}','cancel',this)" class="btn btn-outline btn-sm" style="border-color:var(--err);color:var(--err)">⛔ 强制取消</button>`:""}
+        </div>
+        <div style="margin-top:4px;font-size:10px;color:var(--g400);word-break:break-all">Session: ${j.sessionId}</div>
+      </div>`;
+    }).join("");
+  }catch(e){showToast("加载失败："+e,"err")}
+}
+
+$("refreshStuckBtn").addEventListener("click",loadStuckJobs);
 
 // ── 自动登录（含会话过期检查） ──
 if(secret && loginTime && (Date.now()-loginTime) < SESSION_TTL){
