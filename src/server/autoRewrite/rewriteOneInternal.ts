@@ -133,6 +133,18 @@ export async function rewriteOneInternal(params: {
      * 因此：auto + high risk 默认直接走 aggressive + factLock（风险模式除外）。
      */
     const startAggressive = params.type === "auto" && params.riskBefore >= 70 && !params.allowFactRisk;
+
+    /**
+     * 自动模式下 attempt1 始终启用 factLock（allowFactRisk 时由用户承担事实风险故跳过）。
+     *
+     * 设计原因：
+     * - 护栏拦截（REWRITE_GUARDRAIL）是高失败率的主要来源：LLM 改写时容易新增数字/地名/机构；
+     * - factLock 在发出 prompt 前将原文中的事实锚点替换为占位符，LLM 只能改句式/措辞，
+     *   改写后再还原占位符，从 prompt 层面消除新增事实锚点的根本动机；
+     * - 实测 attempt1 无 factLock 时 guard 失败率约 60-70%（需要进入 attempt2/3 重试）；
+     *   启用 factLock 后预期 attempt1 通过率显著提升，减少超时和重试消耗。
+     */
+    const autoFactLock = params.type === "auto" && !params.allowFactRisk;
     const attempt1 = await rewriteParagraphWithDashscope({
       logger: params.logger,
       paragraphText: params.baseText,
@@ -141,7 +153,7 @@ export async function rewriteOneInternal(params: {
       signals: params.signals,
       rewriteMode: startAggressive ? "aggressive" : "normal",
       minChangeRatio: startAggressive ? 0.35 : undefined,
-      factLock: startAggressive,
+      factLock: autoFactLock,
     });
     const guard1 = params.allowFactRisk
       ? ({ ok: true } as const)

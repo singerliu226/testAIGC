@@ -533,6 +533,19 @@ export function registerRewriteRoutes(params: { router: Router; logger: AppLogge
       const isAdmin = isAdminRequest(req.header("x-admin-secret"));
       ledger.ensureAccount(accountId, getDefaultFreePoints());
 
+      // 积分预检：非管理员余额为 0 时立即拦截，避免"60段全部INSUFFICIENT_POINTS失败"
+      if (!isAdmin) {
+        const balance = ledger.getBalance(accountId);
+        const billingCfg = loadBillingConfigFromEnv();
+        if (balance < billingCfg.minPointsPerCall) {
+          throw new HttpError(
+            402,
+            "INSUFFICIENT_POINTS",
+            `积分不足：当前余额 ${balance} 积分，至少需要 ${billingCfg.minPointsPerCall} 积分才能启动改写任务。请联系管理员充值后重试。`
+          );
+        }
+      }
+
       const jobId = randomUUID();
       const now = Date.now();
       params.store.update(sessionId, {
