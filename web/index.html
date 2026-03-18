@@ -2180,70 +2180,86 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
           rwProgressText.textContent="已完成（100%）";
         }
 
-        const sess=await fetchSession(state.sessionId);
-        state.session=sess;
-        render();
-        const beforeScore=job.progress?.overallBefore;
-        const afterScore=sess.reportAfter?.overallRiskScore;
-        const fails=(job.failures||[]);
-
-        if(succCount>0){
+        // 用 try-finally 确保无论 fetchSession/render/modal 是否抛出，
+        // queue.running 都会被归零，按钮不会永久灰住。
+        try{
+          const sess=await fetchSession(state.sessionId);
+          state.session=sess;
+          render();
           const exportHref=`/api/export/${encodeURIComponent(state.sessionId)}`;
-          syncExportButtons(exportHref,true);
-        }
+          const beforeScore=job.progress?.overallBefore;
+          const afterScore=sess.reportAfter?.overallRiskScore;
+          const fails=(job.failures||[]);
 
-        if(didNothing||allFailed){
-          const reason=exhausted||(allFailed
-            ?`本次尝试改写 ${procCount} 段均未通过校验（被拦截或超时），AI 率未变化`
-            :"所有高风险段落均已达到改写上限，或当前 AI 率已满足目标");
-          showToast("⚠️ "+reason,"warn",10000);
-          queue.running=false;
-          updateSelectionUI();
-          return;
-        }
+          if(succCount>0){
+            syncExportButtons(exportHref,true);
+          }
 
-        if(fails.length){
-          showToast(`已完成可改部分，但有 ${fails.length} 段被拦截/失败（已跳过）`,"warn",8000);
-          const wantContinue=await openRewriteFailModal(fails.length,fails);
-          if(wantContinue){
-            queue.running=true;
-            rewriteToTargetBtn.disabled=true;
-            setRwProgress(0,1,"正在启动风险模式继续尝试…");
-            const preferIds=fails.map(x=>x.paragraphId).filter(Boolean);
-            const s2=await fetch(`/api/rewrite-to-target/${encodeURIComponent(state.sessionId)}/start`,{
-              method:"POST",
-              headers:getHeaders(),
-              body:JSON.stringify({targetScore:15,maxRounds:10,perRound:10,maxTotal:60,minParagraphScore:35,maxPerParagraph:3,stopNoImproveRounds:3,allowFactRisk:true,preferParagraphIds:preferIds})
-            });
-            const j2=await s2.json();
-            if(j2.ok&&j2.jobId){
-              jobId=j2.jobId;
-              stopPolling();
-              await poll();
-              pollTimer=setInterval(()=>{poll().catch(()=>{})},1200);
-              return;
-            }else{
-              showToast("继续尝试启动失败："+(j2.error?.message||j2.message||"未知错误"),"err",8000);
+          if(didNothing||allFailed){
+            const reason=exhausted||(allFailed
+              ?`本次尝试改写 ${procCount} 段均未通过校验（被拦截或超时），AI 率未变化`
+              :"所有高风险段落均已达到改写上限，或当前 AI 率已满足目标");
+            showToast("⚠️ "+reason,"warn",10000);
+            return; // finally will still run
+          }
+
+          if(fails.length){
+            showToast(`已完成可改部分，但有 ${fails.length} 段被拦截/失败（已跳过）`,"warn",8000);
+            let wantContinue=false;
+            try{wantContinue=await openRewriteFailModal(fails.length,fails);}catch(_){}
+            if(wantContinue){
+              queue.running=true; // will be re-set by the new job cycle
+              rewriteToTargetBtn.disabled=true;
+              setRwProgress(0,1,"正在启动风险模式继续尝试…");
+              const preferIds=fails.map(x=>x.paragraphId).filter(Boolean);
+              const s2=await fetch(`/api/rewrite-to-target/${encodeURIComponent(state.sessionId)}/start`,{
+                method:"POST",
+                headers:getHeaders(),
+                body:JSON.stringify({targetScore:15,maxRounds:10,perRound:10,maxTotal:60,minParagraphScore:35,maxPerParagraph:3,stopNoImproveRounds:3,allowFactRisk:true,preferParagraphIds:preferIds})
+              });
+              const j2=await s2.json();
+              if(j2.ok&&j2.jobId){
+                jobId=j2.jobId;
+                stopPolling();
+                await poll();
+                pollTimer=setInterval(()=>{poll().catch(e=>{
+                  console.error("poll error",e);stopPolling();queue.running=false;updateSelectionUI();
+                })},1200);
+                return; // new cycle started, don't reset queue.running below
+              }else{
+                showToast("继续尝试启动失败："+(j2.error?.message||j2.message||"未知错误"),"err",8000);
+                // falls to finally → queue.running=false
+              }
             }
           }
-        }
 
-        if(typeof beforeScore==="number"&&typeof afterScore==="number"){
-          const d=Math.round(afterScore-beforeScore);
-          const remainHigh=(sess.reportAfter?.paragraphReports||[]).filter(r=>r.riskScore>=35).length;
-          const rwCounts=sess.paragraphRewriteCounts||{};
-          const remainUnlocked=remainHigh-Object.values(rwCounts).filter(v=>v>=10).length;
-          let hint="";
-          if(afterScore<=15){hint="已达目标，可直接下载！";}
-          else if(remainUnlocked>0){hint=`仍有 ${remainUnlocked} 个高风险段落可继续改写，建议再次点击继续降低。`;}
-          else if(remainHigh>0){hint=`剩余 ${remainHigh} 个高风险段落已达改写上限，建议结合"建议"栏手动修改。`;}
-          const dText=d<0?`降低 ${Math.abs(d)}%`:(d===0?"无变化":`上升 ${d}%`);
-          showToast(`本次降重：${Math.round(beforeScore)}% → ${Math.round(afterScore)}%（${dText}）${hint?"  "+hint:""}`,d<=0?"ok":"warn",8000);
-        }else{
-          showToast("自动降分完成","ok",4000);
+          if(typeof beforeScore==="number"&&typeof afterScore==="number"){
+            const d=Math.round(afterScore-beforeScore);
+            const remainHigh=(sess.reportAfter?.paragraphReports||[]).filter(r=>r.riskScore>=35).length;
+            const rwCounts=sess.paragraphRewriteCounts||{};
+            const remainUnlocked=remainHigh-Object.values(rwCounts).filter(v=>v>=10).length;
+            let hint="";
+            if(afterScore<=15){hint="已达目标，可直接下载！";}
+            else if(remainUnlocked>0){hint=`仍有 ${remainUnlocked} 个高风险段落可继续改写，建议再次点击继续降低。`;}
+            else if(remainHigh>0){hint=`剩余 ${remainHigh} 个高风险段落已达改写上限，建议结合"建议"栏手动修改。`;}
+            const dText=d<0?`降低 ${Math.abs(d)}%`:(d===0?"无变化":`上升 ${d}%`);
+            showToast(`本次降重：${Math.round(beforeScore)}% → ${Math.round(afterScore)}%（${dText}）${hint?"  "+hint:""}`,d<=0?"ok":"warn",8000);
+          }else{
+            showToast("自动降分完成","ok",4000);
+          }
+        }catch(completedErr){
+          console.error("completed block error",completedErr);
+          showToast("处理完成结果时出错，请刷新页面后查看并下载","warn",6000);
+          // 即使出错也要暴露下载按钮（session已有改写结果）
+          if(succCount>0){
+            const exportHref=`/api/export/${encodeURIComponent(state.sessionId)}`;
+            syncExportButtons(exportHref,true);
+          }
+        }finally{
+          // 无论成功/失败/Modal取消，都必须解锁按钮
+          queue.running=false;
+          updateSelectionUI();
         }
-        queue.running=false;
-        updateSelectionUI();
         return;
       }
       if(job.status==="failed"){
@@ -2254,7 +2270,6 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
         rwProgressText.textContent=`失败：${em}`;
         showToast("自动降分失败："+em+"。可尝试重新点击「一键自动降重」。","err",10000);
         queue.running=false;
-        rewriteToTargetBtn.disabled=false;
         updateSelectionUI();
         return;
       }
@@ -2262,32 +2277,38 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
         stopPolling();
         cancelBtn.style.display="none";
         const succ2=job.progress?.succeeded??0;
-        // 刷新 session 并更新结果视图
-        const sess2=await fetchSession(state.sessionId);
-        state.session=sess2;
-        render();
-        if(succ2>0){
-          const exportHref=`/api/export/${encodeURIComponent(state.sessionId)}`;
-          syncExportButtons(exportHref,true);
-          // 进度条停在当前位置，颜色变为警告橙，告知"已停止"
-          rwProgress.classList.add("visible");
-          rwProgressFill.style.width=pct+"%";
-          rwProgressFill.style.background="var(--warn)";
-          // 进度文本内嵌下载按钮，让用户一眼能点
-          rwProgressText.innerHTML=`已停止，${succ2} 段已保存&nbsp;·&nbsp;<a href="${exportHref}" style="color:var(--ok);font-weight:600;text-decoration:underline" download>立即下载</a>`;
-          // 滚动到检测结果卡片并高亮顶部下载按钮
-          overviewCard.scrollIntoView({behavior:"smooth",block:"start"});
-          exportTop.style.outline="3px solid var(--ok)";
-          exportTop.style.outlineOffset="3px";
-          setTimeout(()=>{exportTop.style.outline="";exportTop.style.outlineOffset=""},5000);
-          showToast(`已停止，${succ2} 段改写结果已保存，可查看并下载`,"ok",6000);
-        }else{
-          rwProgressFill.style.width="0%";
-          rwProgressText.textContent="已取消，无改写结果";
-          showToast("已取消，暂无改写结果","warn",4000);
+        try{
+          const sess2=await fetchSession(state.sessionId);
+          state.session=sess2;
+          render();
+          if(succ2>0){
+            const exportHref=`/api/export/${encodeURIComponent(state.sessionId)}`;
+            syncExportButtons(exportHref,true);
+            rwProgress.classList.add("visible");
+            rwProgressFill.style.width=pct+"%";
+            rwProgressFill.style.background="var(--warn)";
+            rwProgressText.innerHTML=`已停止，${succ2} 段已保存&nbsp;·&nbsp;<a href="${exportHref}" style="color:var(--ok);font-weight:600;text-decoration:underline" download>立即下载</a>`;
+            overviewCard.scrollIntoView({behavior:"smooth",block:"start"});
+            exportTop.style.outline="3px solid var(--ok)";
+            exportTop.style.outlineOffset="3px";
+            setTimeout(()=>{exportTop.style.outline="";exportTop.style.outlineOffset=""},5000);
+            showToast(`已停止，${succ2} 段改写结果已保存，可查看并下载`,"ok",6000);
+          }else{
+            rwProgressFill.style.width="0%";
+            rwProgressText.textContent="已取消，无改写结果";
+            showToast("已取消，暂无改写结果","warn",4000);
+          }
+        }catch(cancelledErr){
+          console.error("cancelled block error",cancelledErr);
+          if(succ2>0){
+            const exportHref=`/api/export/${encodeURIComponent(state.sessionId)}`;
+            syncExportButtons(exportHref,true);
+            showToast("任务已停止，请点击顶部下载按钮获取结果","ok",6000);
+          }
+        }finally{
+          queue.running=false;
+          updateSelectionUI();
         }
-        queue.running=false;
-        updateSelectionUI();
         return;
       }
 
@@ -2298,12 +2319,16 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
     };
 
     await poll();
-    pollTimer=setInterval(()=>{poll().catch(()=>{})},1200);
+    pollTimer=setInterval(()=>{poll().catch(e=>{
+      console.error("rewrite poll error",e);
+      stopPolling();
+      queue.running=false;
+      updateSelectionUI();
+    })},1200);
   }catch(e){
     stopPolling();
     showToast("网络错误："+String(e),"err",6000);
     queue.running=false;
-    rewriteToTargetBtn.disabled=false;
     updateSelectionUI();
   }finally{
     // 不在这里隐藏进度，避免“进度消失像没发生”
@@ -2949,29 +2974,36 @@ function resumeJobPolling(sessionId,jobId){
       if(overall!==null)verdictDesc.textContent=`自动降分进行中：当前AI率约 ${Math.round(overall)}%（后台运行中）`;
       if(job.status==="completed"||job.status==="failed"||job.status==="cancelled"){
         clearInterval(t);
-        const sess=await fetchSession(sessionId);
-        if(sess&&sess.ok!==false){
-          state.session=sess;
-          render();
-          const hasAnyRevised=sess.revised&&Object.keys(sess.revised).length>0;
-          if(hasAnyRevised){
-            syncExportButtons(`/api/export/${encodeURIComponent(sessionId)}`,true);
+        try{
+          const sess=await fetchSession(sessionId);
+          if(sess&&sess.ok!==false){
+            state.session=sess;
+            render();
+            const hasAnyRevised=sess.revised&&Object.keys(sess.revised).length>0;
+            if(hasAnyRevised){
+              syncExportButtons(`/api/export/${encodeURIComponent(sessionId)}`,true);
+            }
           }
-        }
-        if(job.status==="completed"){
-          const succ3=Number(p.succeeded||0);
-          const proc3=Number(p.processed||0);
-          if(proc3>0&&succ3===0)showToast("⚠️ 自动降分已尝试但所有段落均未通过校验，AI 率未变化","warn",8000);
-          else showToast("自动降分完成（刷新前启动的任务）","ok",5000);
-        }
-        else if(job.status==="failed")showToast("自动降分失败（刷新前启动的任务）","err",5000);
-        else if(job.status==="cancelled"){
-          const sc=Number(p.succeeded||0);
-          if(sc>0)showToast(`自动降分已停止，${sc} 段改写结果已保存（刷新前的任务）`,"ok",5000);
-          else showToast("自动降分已取消（刷新前的任务）","warn",4000);
+          if(job.status==="completed"){
+            const succ3=Number(p.succeeded||0);
+            const proc3=Number(p.processed||0);
+            if(proc3>0&&succ3===0)showToast("⚠️ 自动降分已尝试但所有段落均未通过校验，AI 率未变化","warn",8000);
+            else showToast("自动降分完成（刷新前启动的任务）","ok",5000);
+          }
+          else if(job.status==="failed")showToast("自动降分失败（刷新前启动的任务）","err",5000);
+          else if(job.status==="cancelled"){
+            const sc=Number(p.succeeded||0);
+            if(sc>0)showToast(`自动降分已停止，${sc} 段改写结果已保存（刷新前的任务）`,"ok",5000);
+            else showToast("自动降分已取消（刷新前的任务）","warn",4000);
+          }
+        }catch(e){console.error("resumeJobPolling finish error",e);}
+        finally{
+          // 确保无论如何按钮都被解锁
+          queue.running=false;
+          updateSelectionUI();
         }
       }
-    }catch(e){clearInterval(t);}
+    }catch(e){clearInterval(t);queue.running=false;updateSelectionUI();}
   },2000);
 }
 
