@@ -61,5 +61,29 @@
     "ip": "::1",
     "action": "ADMIN_LOGIN_FAILED",
     "details": {}
+  },
+  {
+    "id": "5b924bc1-5907-436d-8aac-a9f54988c7b9",
+    "timestamp": 1773678089983,
+    "ip": "::1",
+    "action": "ADMIN_TOPUP",
+    "details": {
+      "accountId": "185032c2-5d43-4dd4-8c7b-1759de021770-local",
+      "points": 5000,
+      "newBalance": 5020,
+      "txId": "e9e0d7d1-c232-49d8-abcc-824ef399c517"
+    }
+  },
+  {
+    "id": "08a1d6a6-99a6-4b37-928a-fc284b8e10b8",
+    "timestamp": 1773706932770,
+    "ip": "::1",
+    "action": "ADMIN_TOPUP",
+    "details": {
+      "accountId": "185032c2-5d43-4dd4-8c7b-1759de021770-local",
+      "points": 5000,
+      "newBalance": 9974,
+      "txId": "d2d23dd4-6c4e-4410-b986-06d98952ba62"
+    }
   }
 ]

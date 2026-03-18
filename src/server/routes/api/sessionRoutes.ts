@@ -54,11 +54,12 @@ export function registerSessionRoutes(params: { router: Router; store: SessionSt
         reportAfter: session.reportAfter ?? null,
         revised: session.revised ?? {},
         rewriteResults: session.rewriteResults ?? {},
-        // 各段落跨任务累计改写次数，用于前端预检弹窗展示顽固段落数量
         paragraphRewriteCounts: session.paragraphRewriteCounts ?? {},
         chatMessages: session.chatMessages ?? [],
-        // 标记纯文字粘贴会话，前端据此切换"查看改写结果"面板而非下载 docx
         isTextInput: session.isTextInput ?? false,
+        // 后台异步解析状态：前端轮询时据此判断解析是否完成
+        parseError: session.parseError ?? null,
+        isEnglish: session.isEnglish ?? false,
         exportUrl: `/api/export/${encodeURIComponent(sessionId)}`,
       });
     })

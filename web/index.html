@@ -1206,6 +1206,43 @@ async function fetchBalance(){return(await fetch(`/api/billing/balance`,{headers
 async function doTopup(pts){return(await fetch(`/api/billing/topup`,{method:"POST",headers:getHeaders(),body:JSON.stringify({points:pts})})).json()}
 async function fetchSessions(){return(await fetch(`/api/sessions?limit=50`,{headers:getHeaders()})).json()}
 
+/**
+ * LLM 复核/英文检测轮询：解析完成后调用，等待后台 LLM 更新 reportBefore 分数。
+ * 与文件上传、文字上传两个路径共用，避免重复代码。
+ */
+function startJudgePolling(sessionId,isEnglish){
+  const maxPolls=isEnglish?180:12;
+  if(isEnglish){
+    showToast("英文论文检测已启动，正在逐段分析 AI 内容（约需 5-10 分钟），完成后自动更新结果…","ok",8000);
+  }else{
+    showToast("规则检测完成，AI 复核正在后台进行中…","ok",4000);
+  }
+  let polls=0;
+  const pollTimer=setInterval(async()=>{
+    polls++;
+    try{
+      const s2=await fetchSession(sessionId);
+      if(!s2)return;
+      const oldScore=state.session?.reportBefore?.overallRiskScore;
+      const newScore=s2.reportBefore?.overallRiskScore;
+      state.session=s2;
+      if(newScore!==oldScore&&!(newScore===0&&oldScore===0)){
+        const rb2=s2.reportBefore;
+        const ids2=(rb2?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
+        state.selected=new Set(ids2);
+        activeFilter=ids2.length>0?"medium":"all";
+        render();
+        const msg=isEnglish?"英文 AI 检测完成，结果已更新":"AI 复核完成，结果已更新";
+        showToast(msg,"ok",4000);
+        clearInterval(pollTimer);
+      }else if(polls>=maxPolls){
+        if(isEnglish)showToast("英文检测超时，当前显示为初步结果，可稍后刷新页面查看完整检测","warn",5000);
+        clearInterval(pollTimer);
+      }
+    }catch(e){clearInterval(pollTimer);}
+  },5000);
+}
+
 function estimatePoints(){
   if(!state.session)return 0;const ps=state.session.paragraphs||[];let s=0;
   for(const pid of state.selected){const p=ps.find(x=>x.id===pid);if(p)s+=Math.max(1,Math.ceil((String(p.text||"").trim().length||1)/200))}
@@ -1761,6 +1798,52 @@ uploadBtn.addEventListener("click",async()=>{
       state.sessionId=json.sessionId;
       localStorage.setItem(lastSessionKey,json.sessionId);
       syncExportButtons(`/api/export/${encodeURIComponent(json.sessionId)}`,false);
+
+      // 新协议：服务端立即返回 status:"parsing"，文件解析在后台异步进行。
+      // 前端轮询直到 reportBefore 出现（最多 180s），期间保持进度条动画。
+      if(json.status==="parsing"){
+        dropTitle.textContent="文件解析中，请稍候…";
+        dropHint.textContent="服务器正在提取段落并进行检测，大文件约需 30–120 秒";
+        showToast("文件已上传，正在后台解析，请稍候…","ok",5000);
+        let parsePolls=0;
+        const maxParsePolls=90; // 90 × 2s = 180s 上限
+        const parseTimer=setInterval(async()=>{
+          parsePolls++;
+          pct=Math.min(pct+1,95);uploadProgressBar.style.width=pct+"%";
+          try{
+            const s=await fetchSession(json.sessionId);
+            if(!s)return;
+            if(s.parseError){
+              clearInterval(parseTimer);
+              clearTimeout(timer);clearInterval(pTimer);
+              stopLoadingTips();uploadProgress.classList.remove("visible");
+              showToast("解析失败："+s.parseError,"err",8000);
+              return;
+            }
+            if(s.reportBefore){
+              clearInterval(parseTimer);
+              state.session=s;
+              uploadProgressBar.style.width="100%";
+              stopLoadingTips();
+              setTimeout(()=>uploadProgress.classList.remove("visible"),500);
+              const rb=s.reportBefore;
+              const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
+              state.selected=new Set(riskyIds);
+              activeFilter=riskyIds.length>0?"medium":"all";
+              render();updateStepper(2);showMethodGuide();
+              // 启动 LLM 复核轮询（与下方逻辑复用）
+              startJudgePolling(json.sessionId,s.isEnglish===true);
+            }else if(parsePolls>=maxParsePolls){
+              clearInterval(parseTimer);
+              stopLoadingTips();uploadProgress.classList.remove("visible");
+              showToast("解析超时，服务器可能繁忙，请稍后刷新页面重试","warn",8000);
+            }
+          }catch(e){ /* 网络抖动：继续轮询 */ }
+        },2000);
+        return; // 后续由轮询接管
+      }
+
+      // 旧协议兼容：服务端同步返回了 report（不应该再出现，但保留兜底）
       const sess=await fetchSession(json.sessionId);state.session=sess;
       uploadProgressBar.style.width="100%";
       stopLoadingTips();
@@ -1771,43 +1854,7 @@ uploadBtn.addEventListener("click",async()=>{
       activeFilter=riskyIds.length>0?"medium":"all";
       render();
       updateStepper(2);showMethodGuide();
-      // LLM 复核/英文检测在后台进行，轮询刷新结果
-      if(json.judgeStatus==="pending"){
-        const isEn=json.isEnglish===true;
-        // 英文检测需 5-10 分钟（180次×5s=15分钟），中文复核约 60s（12次×5s）
-        const maxPolls=isEn?180:12;
-        const pollIntervalMs=isEn?5000:5000;
-        if(isEn){
-          showToast("英文论文检测已启动，正在逐段分析 AI 内容（约需 5-10 分钟），完成后自动更新结果…","ok",8000);
-        }else{
-          showToast("规则检测完成，AI 复核正在后台进行中…","ok",4000);
-        }
-        let polls=0;
-        const pollTimer=setInterval(async()=>{
-          polls++;
-          try{
-            const s2=await fetchSession(json.sessionId);
-            if(!s2)return;
-            const oldScore=state.session?.reportBefore?.overallRiskScore;
-            const newScore=s2.reportBefore?.overallRiskScore;
-            state.session=s2;
-            // 检测到分数从 0（占位）变为实际值，或中文复核完成
-            if(newScore!==oldScore&&!(newScore===0&&oldScore===0)){
-              const rb2=s2.reportBefore;
-              const ids2=(rb2?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
-              state.selected=new Set(ids2);
-              activeFilter=ids2.length>0?"medium":"all";
-              render();
-              const msg=isEn?"英文 AI 检测完成，结果已更新":"AI 复核完成，结果已更新";
-              showToast(msg,"ok",4000);
-              clearInterval(pollTimer);
-            }else if(polls>=maxPolls){
-              if(isEn)showToast("英文检测超时，当前显示为初步结果，可稍后刷新页面查看完整检测","warn",5000);
-              clearInterval(pollTimer);
-            }
-          }catch(e){clearInterval(pollTimer)}
-        },pollIntervalMs);
-      }
+      startJudgePolling(json.sessionId,json.isEnglish===true);
     }
   }catch(e){
     const msg=String(e);
@@ -1943,26 +1990,7 @@ uploadTextBtn.addEventListener("click",async()=>{
       textFallbackBody.classList.add("hidden");
       textFallbackArrow.classList.remove("open");
       if(json.judgeStatus==="pending"){
-        showToast("规则检测完成，AI 复核正在后台进行中…","ok",4000);
-        let polls3=0;const maxPolls3=12;
-        const pollTimer3=setInterval(async()=>{
-          polls3++;
-          try{
-            const s2=await fetchSession(json.sessionId);
-            if(!s2)return;
-            const oldScore=state.session?.reportBefore?.overallRiskScore;
-            const newScore=s2.reportBefore?.overallRiskScore;
-            state.session=s2;
-            if(newScore!==oldScore&&!(newScore===0&&oldScore===0)){
-              const rb2=s2.reportBefore;
-              const ids2=(rb2?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
-              state.selected=new Set(ids2);
-              render();
-              showToast("AI 复核完成，结果已更新","ok",3000);
-              clearInterval(pollTimer3);
-            }else if(polls3>=maxPolls3){clearInterval(pollTimer3);}
-          }catch(e){clearInterval(pollTimer3);}
-        },5000);
+        startJudgePolling(json.sessionId,false);
       }
     }else{
       showToast("检测失败："+(json.message||json.error||"未知错误"),"err",5000);

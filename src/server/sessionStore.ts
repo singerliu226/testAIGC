@@ -101,6 +101,21 @@ export type SessionRecord = {
   isTextInput?: boolean;
 
   /**
+   * 文档语言（后台解析完成后写入）。
+   * 前端轮询 parseStatus 完成后据此决定是否显示英文检测提示。
+   */
+  isEnglish?: boolean;
+
+  /**
+   * 后台解析失败时记录错误信息。
+   *
+   * 设计原因：
+   * - 上传接口已改为"立即响应 + 后台解析"，解析失败无法通过 HTTP 状态码传达；
+   * - 前端轮询 /api/session/:sessionId 时检测此字段，若存在则展示错误并停止轮询。
+   */
+  parseError?: string;
+
+  /**
    * 每个段落被成功改写的累计次数（跨多次任务）。
    *
    * 设计原因：

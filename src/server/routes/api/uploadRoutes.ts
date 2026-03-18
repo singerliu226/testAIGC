@@ -104,233 +104,216 @@ export function registerUploadRoutes(params: {
         accountId,
       });
 
-      const t0 = Date.now();
-      log.info("Uploaded file", {
+      log.info("Uploaded file, starting background parse", {
         sessionId: session.sessionId,
         filename: session.filename,
         originalSize: file.size,
         docxSize: docxBuffer.length,
       });
 
-      let parsed: Awaited<ReturnType<typeof parseDocx>>;
-      try {
-        parsed = await parseDocx(docxBuffer);
-      } catch (parseErr) {
-        // 解析失败：记录详细错误，便于从 Zeabur 日志排查具体原因
-        log.error("Docx parse failed", {
-          sessionId: session.sessionId,
-          filename: session.filename,
-          fileSizeKB: Math.round(docxBuffer.length / 1024),
-          error: parseErr instanceof Error ? parseErr.message : String(parseErr),
-          stack: parseErr instanceof Error ? parseErr.stack?.slice(0, 500) : undefined,
-        });
-        throw new HttpError(422, "PARSE_FAILED", `文件解析失败，请确认文件为标准 .docx 格式：${parseErr instanceof Error ? parseErr.message : String(parseErr)}`);
-      }
-      const t1 = Date.now();
-
-      const paragraphs = parsed.paragraphs.map((p) => ({
-        id: p.id,
-        index: p.index,
-        text: p.text,
-        kind: p.kind,
-      }));
-
-      // 检测文档语言：英文走 LLM 主判断路径（后台异步），中文走规则引擎（同步快速返回）
-      const { detectDocumentLanguage: detectLang } = await import(
-        "../../../analysis/textUtils.js"
-      );
-      const docLang = detectLang(paragraphs);
-      const isEnglish = docLang === "en";
-
-      // 准备 LLM 依赖（英文 LLM 检测 + 中文 LLM 复核均需要）
-      let llmDeps: Parameters<typeof detectAigcRiskAsync>[1] | undefined;
-      try {
-        const llmCfg = loadDashscopeConfigFromEnv();
-        llmDeps = {
-          llmClient: createDashscopeClient(llmCfg),
-          model: llmCfg.model,
-          logger: log,
-        };
-      } catch {
-        log.warn("LLM config unavailable, falling back to rule-based detection");
-      }
-
       /**
-       * 同步检测（始终执行）：
-       * - 中文：规则引擎，毫秒级，直接用于首屏展示；
-       * - 英文：同样先跑规则引擎拿到结构信息（分数近似 0），作为占位 report 立即返回；
-       *   然后在后台用 LLM 重新检测并覆盖 reportBefore（前端通过轮询获取最终结果）。
+       * 立即响应：上传接收成功后马上返回 sessionId + status:"parsing"。
        *
-       * 设计原因：英文 LLM 检测对 40 页论文需要 5-10 分钟，同步等待会超出 HTTP 超时限制；
-       * 采用"快速占位 + 后台更新"模式，与现有 LLM 复核（judgeStatus="pending"）架构完全一致。
+       * 设计原因：
+       * - parseDocx + detectAigcRisk + 磁盘持久化在大文件（300+段落、含图片）时
+       *   可能超过 Zeabur 反向代理的读超时（约 60s），导致 502 Bad Gateway；
+       * - 改为后台异步处理：前端收到 sessionId 后开始轮询 /api/session/:sessionId，
+       *   直到 reportBefore 出现，与现有 judgeStatus 轮询机制完全一致。
        */
-      const reportBefore = detectAigcRisk(paragraphs);
-      const t2 = Date.now();
-
-      const storedParas = parsed.paragraphs.map((p) => ({
-        id: p.id,
-        index: p.index,
-        text: p.text,
-        kind: p.kind,
-      }));
-      params.store.update(session.sessionId, {
-        paragraphs: storedParas,
-        reportBefore,
-        reportAfter: undefined,
-        revised: {},
-        rewriteResults: {},
-        revision: 0,
-        revisedDocx: undefined,
-        revisedDocxRevision: undefined,
-      });
-      const t3 = Date.now();
-
-      const emptyTextParas = paragraphs.filter((p) => p.kind === "paragraph" && !p.text.trim()).length;
-      log.info("Docx upload pipeline timing", {
-        sessionId: session.sessionId,
-        fileSizeKB: Math.round(file.size / 1024),
-        parseMs: t1 - t0,
-        detectMs: t2 - t1,
-        persistMs: t3 - t2,
-        totalMs: t3 - t0,
-        paragraphCount: parsed.paragraphs.length,
-        imageParagraphs: paragraphs.filter((p) => p.kind === "imageParagraph").length,
-        textParagraphs: paragraphs.filter((p) => p.kind === "paragraph").length,
-        emptyTextParas,
-        overallRiskScore: reportBefore.overallRiskScore,
-        docLang,
-      });
-
       res.json({
         ok: true,
         sessionId: session.sessionId,
-        paragraphCount: parsed.paragraphs.length,
-        report: reportBefore,
-        judgeStatus: "pending",
-        isEnglish,
-        message: isEnglish
-          ? "文件解析完成，正在进行英文 AI 内容分析（约需 5-10 分钟），请稍候…"
-          : "规则检测完成，LLM 复核正在后台进行中…",
+        status: "parsing",
+        message: "文件已接收，正在解析中，请稍候…",
       });
 
-      // ── 后台异步 LLM 处理，不阻塞 HTTP 响应 ──
-      if (process.env.DASHSCOPE_API_KEY && llmDeps) {
-        if (isEnglish) {
-          /**
-           * 英文路径：后台运行完整 LLM 检测（5-10 分钟），完成后替换 reportBefore。
-           *
-           * 设计原因：
-           * - 英文规则引擎对英文文本输出近似 0 分（中文 NLP 词典无效），仅作占位；
-           * - 必须在后台运行全量 LLM 检测；前端通过轮询 judgeStatus 更新结果；
-           * - 与中文 LLM 复核共用同一轮询机制（当 overallRiskScore 从 0 变为实际值时触发 UI 刷新）。
-           */
-          const enLlmDeps = llmDeps;
-          (async () => {
-            try {
-              log.info("Starting background English LLM detection", {
-                sessionId: session.sessionId,
-                paragraphCount: paragraphs.length,
-              });
-              const enReport = await detectAigcRiskAsync(paragraphs, enLlmDeps);
-              params.store.update(session.sessionId, { reportBefore: enReport });
-              log.info("Background English LLM detection completed", {
-                sessionId: session.sessionId,
-                overallScore: enReport.overallRiskScore,
-              });
-            } catch (err) {
-              log.error("Background English LLM detection failed", { error: String(err) });
-            }
-          })();
-        } else {
-          /**
-           * 中文路径：LLM 复核高风险段落（最多 30 个），与规则分融合后更新 reportBefore。
-           * 这是原有逻辑，保持不变。
-           */
-          const MAX_JUDGE = 30;
-          const candidatesForJudge = reportBefore.paragraphReports
-            .filter((r) => r.riskScore >= 50)
-            .sort((a, b) => b.riskScore - a.riskScore)
-            .slice(0, MAX_JUDGE);
+      // ── 后台异步解析 + 检测 ──
+      (async () => {
+        const t0 = Date.now();
+        let parsed: Awaited<ReturnType<typeof parseDocx>>;
+        try {
+          parsed = await parseDocx(docxBuffer);
+        } catch (parseErr) {
+          log.error("Docx parse failed (background)", {
+            sessionId: session.sessionId,
+            filename: session.filename,
+            fileSizeKB: Math.round(docxBuffer.length / 1024),
+            error: parseErr instanceof Error ? parseErr.message : String(parseErr),
+            stack: parseErr instanceof Error ? parseErr.stack?.slice(0, 500) : undefined,
+          });
+          // 将解析错误写入 session，前端轮询时读取并展示
+          params.store.update(session.sessionId, {
+            parseError: `文件解析失败：${parseErr instanceof Error ? parseErr.message : String(parseErr)}`,
+          });
+          return;
+        }
+        const t1 = Date.now();
 
-          if (candidatesForJudge.length > 0) {
+        const paragraphs = parsed.paragraphs.map((p) => ({
+          id: p.id,
+          index: p.index,
+          text: p.text,
+          kind: p.kind,
+        }));
+
+        // 检测文档语言：英文走 LLM 主判断路径（后台异步），中文走规则引擎（同步快速返回）
+        const { detectDocumentLanguage: detectLang } = await import(
+          "../../../analysis/textUtils.js"
+        );
+        const docLang = detectLang(paragraphs);
+        const isEnglish = docLang === "en";
+
+        // 准备 LLM 依赖（英文 LLM 检测 + 中文 LLM 复核均需要）
+        let llmDeps: Parameters<typeof detectAigcRiskAsync>[1] | undefined;
+        try {
+          const llmCfg = loadDashscopeConfigFromEnv();
+          llmDeps = {
+            llmClient: createDashscopeClient(llmCfg),
+            model: llmCfg.model,
+            logger: log,
+          };
+        } catch {
+          log.warn("LLM config unavailable, falling back to rule-based detection");
+        }
+
+        const reportBefore = detectAigcRisk(paragraphs);
+        const t2 = Date.now();
+
+        params.store.update(session.sessionId, {
+          paragraphs,
+          reportBefore,
+          reportAfter: undefined,
+          revised: {},
+          rewriteResults: {},
+          revision: 0,
+          revisedDocx: undefined,
+          revisedDocxRevision: undefined,
+          isEnglish,
+        });
+        const t3 = Date.now();
+
+        const emptyTextParas = paragraphs.filter((p) => p.kind === "paragraph" && !p.text.trim()).length;
+        log.info("Docx upload pipeline timing (background)", {
+          sessionId: session.sessionId,
+          fileSizeKB: Math.round(file.size / 1024),
+          parseMs: t1 - t0,
+          detectMs: t2 - t1,
+          persistMs: t3 - t2,
+          totalMs: t3 - t0,
+          paragraphCount: parsed.paragraphs.length,
+          imageParagraphs: paragraphs.filter((p) => p.kind === "imageParagraph").length,
+          textParagraphs: paragraphs.filter((p) => p.kind === "paragraph").length,
+          emptyTextParas,
+          overallRiskScore: reportBefore.overallRiskScore,
+          docLang,
+        });
+
+        // ── 后台异步 LLM 处理 ──
+        if (process.env.DASHSCOPE_API_KEY && llmDeps) {
+          if (isEnglish) {
+            const enLlmDeps = llmDeps;
             (async () => {
               try {
-                log.info("Starting background LLM judge review", {
+                log.info("Starting background English LLM detection", {
                   sessionId: session.sessionId,
-                  candidateCount: candidatesForJudge.length,
+                  paragraphCount: paragraphs.length,
                 });
+                const enReport = await detectAigcRiskAsync(paragraphs, enLlmDeps);
+                params.store.update(session.sessionId, { reportBefore: enReport });
+                log.info("Background English LLM detection completed", {
+                  sessionId: session.sessionId,
+                  overallScore: enReport.overallRiskScore,
+                });
+              } catch (err) {
+                log.error("Background English LLM detection failed", { error: String(err) });
+              }
+            })();
+          } else {
+            const MAX_JUDGE = 30;
+            const candidatesForJudge = reportBefore.paragraphReports
+              .filter((r) => r.riskScore >= 50)
+              .sort((a, b) => b.riskScore - a.riskScore)
+              .slice(0, MAX_JUDGE);
 
-                const judgeResults = await Promise.allSettled(
-                  candidatesForJudge.map((r) =>
-                    judgeParagraphWithDashscope({
-                      logger: log,
-                      paragraphText: r.text,
-                      signals: r.signals,
-                    })
-                  )
-                );
+            if (candidatesForJudge.length > 0) {
+              (async () => {
+                try {
+                  log.info("Starting background LLM judge review", {
+                    sessionId: session.sessionId,
+                    candidateCount: candidatesForJudge.length,
+                  });
 
-                for (let j = 0; j < candidatesForJudge.length; j++) {
-                  const result = judgeResults[j];
-                  if (result.status !== "fulfilled") continue;
-                  const judgeOutput = result.value;
-                  const paraReport = candidatesForJudge[j];
-
-                  const fused = Math.round(
-                    paraReport.riskScore * 0.4 + judgeOutput.riskScore0to100 * 0.6
+                  const judgeResults = await Promise.allSettled(
+                    candidatesForJudge.map((r) =>
+                      judgeParagraphWithDashscope({
+                        logger: log,
+                        paragraphText: r.text,
+                        signals: r.signals,
+                      })
+                    )
                   );
-                  paraReport.riskScore = Math.min(100, Math.max(0, fused));
-                  paraReport.riskLevel =
-                    paraReport.riskScore >= 70
+
+                  for (let j = 0; j < candidatesForJudge.length; j++) {
+                    const result = judgeResults[j];
+                    if (result.status !== "fulfilled") continue;
+                    const judgeOutput = result.value;
+                    const paraReport = candidatesForJudge[j];
+
+                    const fused = Math.round(
+                      paraReport.riskScore * 0.4 + judgeOutput.riskScore0to100 * 0.6
+                    );
+                    paraReport.riskScore = Math.min(100, Math.max(0, fused));
+                    paraReport.riskLevel =
+                      paraReport.riskScore >= 70
+                        ? "high"
+                        : paraReport.riskScore >= 35
+                          ? "medium"
+                          : "low";
+
+                    if (judgeOutput.topReasons?.length) {
+                      paraReport.signals.push({
+                        signalId: "llm_judge_review",
+                        category: "aiPattern",
+                        title: "AI 复核判断",
+                        evidence: judgeOutput.topReasons.slice(0, 3),
+                        suggestion: judgeOutput.shouldRewrite
+                          ? "建议对此段落进行改写以降低 AI 痕迹。"
+                          : "AI 复核认为此段落风险可控。",
+                        score: 0,
+                      });
+                    }
+                  }
+
+                  let aiChars = 0, allChars = 0;
+                  for (const r of reportBefore.paragraphReports) {
+                    const len = r.text.length;
+                    allChars += len;
+                    if (r.riskScore >= 35) aiChars += len * (r.riskScore / 100);
+                  }
+                  reportBefore.overallRiskScore =
+                    allChars > 0
+                      ? Math.min(100, Math.max(0, Math.round((aiChars / allChars) * 100)))
+                      : 0;
+                  reportBefore.overallRiskLevel =
+                    reportBefore.overallRiskScore >= 70
                       ? "high"
-                      : paraReport.riskScore >= 35
+                      : reportBefore.overallRiskScore >= 35
                         ? "medium"
                         : "low";
 
-                  if (judgeOutput.topReasons?.length) {
-                    paraReport.signals.push({
-                      signalId: "llm_judge_review",
-                      category: "aiPattern",
-                      title: "AI 复核判断",
-                      evidence: judgeOutput.topReasons.slice(0, 3),
-                      suggestion: judgeOutput.shouldRewrite
-                        ? "建议对此段落进行改写以降低 AI 痕迹。"
-                        : "AI 复核认为此段落风险可控。",
-                      score: 0,
-                    });
-                  }
+                  params.store.update(session.sessionId, { reportBefore });
+                  log.info("Background LLM judge completed", {
+                    sessionId: session.sessionId,
+                    overallScore: reportBefore.overallRiskScore,
+                  });
+                } catch (err) {
+                  log.error("Background LLM judge failed", { error: String(err) });
                 }
-
-                // 重新计算文档整体分（对齐知网标准：AI字符数占比）
-                let aiChars = 0, allChars = 0;
-                for (const r of reportBefore.paragraphReports) {
-                  const len = r.text.length;
-                  allChars += len;
-                  if (r.riskScore >= 35) aiChars += len * (r.riskScore / 100);
-                }
-                reportBefore.overallRiskScore =
-                  allChars > 0
-                    ? Math.min(100, Math.max(0, Math.round((aiChars / allChars) * 100)))
-                    : 0;
-                reportBefore.overallRiskLevel =
-                  reportBefore.overallRiskScore >= 70
-                    ? "high"
-                    : reportBefore.overallRiskScore >= 35
-                      ? "medium"
-                      : "low";
-
-                params.store.update(session.sessionId, { reportBefore });
-                log.info("Background LLM judge completed", {
-                  sessionId: session.sessionId,
-                  overallScore: reportBefore.overallRiskScore,
-                });
-              } catch (err) {
-                log.error("Background LLM judge failed", { error: String(err) });
-              }
-            })();
+              })();
+            }
           }
         }
-      }
+      })();
     })
   );
 }
