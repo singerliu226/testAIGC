@@ -824,6 +824,7 @@ async function loadActivity(){
           <th style="padding:8px 10px;text-align:center;border-bottom:1px solid var(--g200);font-weight:500">成功/总段</th>
           <th style="padding:8px 10px;text-align:center;border-bottom:1px solid var(--g200);font-weight:500">轮数</th>
           <th style="padding:8px 10px;text-align:left;border-bottom:1px solid var(--g200);font-weight:500">账号</th>
+          <th style="padding:8px 10px;text-align:center;border-bottom:1px solid var(--g200);font-weight:500">下载</th>
         </tr></thead>
         <tbody>${completed.map(j=>{
           const drop=j.scoreBefore!=null&&j.scoreAfter!=null?j.scoreBefore-j.scoreAfter:null;
@@ -834,6 +835,10 @@ async function loadActivity(){
             :"—";
           const scoreStr=j.scoreBefore!=null&&j.scoreAfter!=null
             ?`${j.scoreBefore}% → ${j.scoreAfter}%`:"—";
+          const exportUrl=j.sessionId?`/api/export/${encodeURIComponent(j.sessionId)}`:"";
+          const dlCell=exportUrl&&j.succeeded>0
+            ?`<a href="${exportUrl}" download style="display:inline-block;padding:3px 10px;font-size:11px;border:1px solid var(--ok);border-radius:4px;background:var(--ok);color:white;text-decoration:none;cursor:pointer" title="下载降重后 docx">下载</a>`
+            :`<span style="color:var(--g300);font-size:11px">—</span>`;
           return`<tr style="border-bottom:1px solid var(--g100)" onmouseover="this.style.background='var(--g50)'" onmouseout="this.style.background=''">
             <td style="padding:8px 10px;max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap" title="${esc(j.filename)}">${esc(j.filename||"—")}</td>
             <td style="padding:8px 10px;text-align:center;color:var(--g500)">${fmtTime(j.finishedAt)}</td>
@@ -849,6 +854,7 @@ async function loadActivity(){
             </td>
             <td style="padding:8px 10px;text-align:center;color:var(--g500)">${j.roundsUsed??0} 轮</td>
             <td style="padding:8px 10px;font-family:var(--font-mono);font-size:11px;color:var(--g400)">${esc(j.accountIdShort)}</td>
+            <td style="padding:8px 10px;text-align:center">${dlCell}</td>
           </tr>`;
         }).join("")}</tbody>
       </table>`;

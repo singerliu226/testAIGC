@@ -795,7 +795,7 @@ body.sidebar-open .action-bar{margin-right:400px}
     <div class="modal-header">历史会话 <button class="icon-btn" id="historyClose">&times;</button></div>
     <div class="modal-body">
       <p style="color:var(--g400)">会话保存在本机 <code style="background:var(--g100);padding:2px 6px;border-radius:4px;font-size:12px">data/sessions/</code>，重启后仍可恢复。</p>
-      <table class="history-table" style="margin-top:12px"><thead><tr><th>时间</th><th>文件名</th><th>AI率</th><th></th></tr></thead><tbody id="historyBody"></tbody></table>
+      <table class="history-table" style="margin-top:12px"><thead><tr><th>时间</th><th>文件名</th><th>AI率</th><th>操作</th></tr></thead><tbody id="historyBody"></tbody></table>
     </div>
   </div>
 </div>
@@ -1197,7 +1197,7 @@ function diffHtml(a,b){
 async function fetchSession(sid){return(await fetch(`/api/session/${encodeURIComponent(sid)}`,{headers:getHeaders()})).json()}
 async function fetchBalance(){return(await fetch(`/api/billing/balance`,{headers:getHeaders()})).json()}
 async function doTopup(pts){return(await fetch(`/api/billing/topup`,{method:"POST",headers:getHeaders(),body:JSON.stringify({points:pts})})).json()}
-async function fetchSessions(){return(await fetch(`/api/sessions?limit=50`)).json()}
+async function fetchSessions(){return(await fetch(`/api/sessions?limit=50`,{headers:getHeaders()})).json()}
 
 function estimatePoints(){
   if(!state.session)return 0;const ps=state.session.paragraphs||[];let s=0;
@@ -2449,9 +2449,16 @@ historyBtn.addEventListener("click",async()=>{
   historyModal.classList.add("open");historyBody.innerHTML=`<tr><td colspan="4" style="color:var(--g400)">加载中…</td></tr>`;
   try{
     const json=await fetchSessions();if(!json.ok)return log(json);const rows=json.sessions||[];historyBody.innerHTML="";
-    for(const s of rows){const dt=new Date(s.createdAt).toLocaleString();const b=s.overallBefore?`${Math.round(s.overallBefore.score)}%`:"-";const a=s.overallAfter?`${Math.round(s.overallAfter.score)}%`:"-";
-    const tr=document.createElement("tr");tr.innerHTML=`<td>${escapeHtml(dt)}</td><td>${escapeHtml(s.filename||"")}</td><td style="font-family:var(--font-mono)">${escapeHtml(b)} → ${escapeHtml(a)}</td><td><button class="btn btn-outline btn-sm" data-load="${escapeHtml(s.sessionId)}">恢复</button></td>`;historyBody.appendChild(tr)}
-    if(!rows.length)historyBody.innerHTML=`<tr><td colspan="4" style="color:var(--g400)">暂无历史会话</td></tr>`;
+    for(const s of rows){
+      const dt=new Date(s.createdAt).toLocaleString();
+      const b=s.overallBefore?`${Math.round(s.overallBefore.score)}%`:"—";
+      const a=s.overallAfter?`${Math.round(s.overallAfter.score)}%`:(s.overallBefore?`${Math.round(s.overallBefore.score)}%（未改写）`:"—");
+      const dlBtn=s.hasRevised?`<a class="btn btn-outline btn-sm" href="/api/export/${encodeURIComponent(s.sessionId)}" download style="margin-right:4px">下载</a>`:"";
+      const tr=document.createElement("tr");
+      tr.innerHTML=`<td>${escapeHtml(dt)}</td><td title="${escapeHtml(s.filename||"")}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.filename||"")}</td><td style="font-family:var(--font-mono);white-space:nowrap">${escapeHtml(b)} → ${escapeHtml(a)}</td><td style="white-space:nowrap">${dlBtn}<button class="btn btn-outline btn-sm" data-load="${escapeHtml(s.sessionId)}">恢复</button></td>`;
+      historyBody.appendChild(tr);
+    }
+    if(!rows.length)historyBody.innerHTML=`<tr><td colspan="4" style="color:var(--g400)">暂无历史会话（会话按账号隔离，本机浏览器 localStorage 中的账号 ID 未找到对应记录）</td></tr>`;
   }catch(e){historyBody.innerHTML=`<tr><td colspan="4" style="color:var(--g400)">加载失败</td></tr>`}
 });
 historyClose.addEventListener("click",()=>historyModal.classList.remove("open"));
@@ -2987,10 +2994,14 @@ function resumeJobPolling(sessionId,jobId){
           resumeJobPolling(lastSid,job.jobId);
         }
       }else{
-        localStorage.removeItem(lastSessionKey);
+        // 会话在服务器端确认不存在（ok:false / 404）才清除本地引用
+        // 网络抖动或服务器重启导致的临时失败不清除，用户刷新后可重试恢复
+        const isGone=sess&&(sess.error?.code==="SESSION_NOT_FOUND"||sess.code==="SESSION_NOT_FOUND");
+        if(isGone)localStorage.removeItem(lastSessionKey);
+        // 否则保留 lastSessionKey，下次刷新仍可尝试恢复
       }
     }catch(e){
-      localStorage.removeItem(lastSessionKey);
+      // 网络错误时不清除 lastSessionKey，保留以便下次页面加载重试
     }
   }
 })();
