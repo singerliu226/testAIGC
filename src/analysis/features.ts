@@ -77,6 +77,13 @@ export type ParagraphFeatures = {
   connectiveAtHeadRatio: number;
 
   /**
+   * 句长极差 = max(句长) - min(句长)。
+   * 人类写作极差通常 ≥20；AI 生成文本句长集中于 15-45 字窄带，极差偏小。
+   * 用于 cog_low_burstiness 信号，与 PaperPass/知网的 burstiness 指标对齐。
+   */
+  sentenceLenRange: number;
+
+  /**
    * 段落内部结构变化率：
    * 检测段落内是否存在"论证→反思→修正"的多阶段思维模式。
    * 通过统计段内句子在「陈述/转折/总结」三种功能间的切换次数来衡量。
@@ -257,6 +264,9 @@ export function extractFeatures(paragraphText: string): ParagraphFeatures {
     cognitiveMarkerHits,
     cognitiveMarkerDensity,
     sentenceLenEntropy,
+    sentenceLenRange: sentenceLens.length >= 2
+      ? Math.max(...sentenceLens) - Math.min(...sentenceLens)
+      : 0,
     connectiveAtHeadRatio,
     internalStructureShifts,
   };

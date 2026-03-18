@@ -371,6 +371,23 @@ export function detectAigcRisk(paragraphs: Array<Pick<DocxParagraph, "id" | "ind
       });
     }
 
+    // 句长极差过小（burstiness 不足）：知网/PaperPass 等检测器使用 burstiness 分布衡量文本熵值，
+    // 真实人类写作中段落内句子长度极差（max-min）通常 >= 20 字，AI 生成文本往往集中在 15-45 字的窄带内。
+    // score=18 略高于 lang_uniform_sentence(15)，因为极差比方差更直接对应 PaperPass 的 burstiness 测量。
+    if (f.sentenceCount >= 3 && f.sentenceLenRange < 20) {
+      signals.push({
+        signalId: "cog_low_burstiness",
+        category: "cognitiveFeatures",
+        title: "句长分布缺乏极差（知网/PaperPass 检测高风险）",
+        evidence: [
+          `句长极差仅 ${f.sentenceLenRange} 字`,
+          "人类写作通常句长极差 ≥20 字（含极短句 ≤8字 或极长句 ≥60字）",
+        ],
+        suggestion: "加入极短句（≤8字，如「这很关键。」「原因如下。」）或极长句（≥60字），打破均匀节奏，降低被 PaperPass/知网 判定为 AI 生成的风险。",
+        score: 18,
+      });
+    }
+
     // 句长均匀性（AI 文本句长趋于相近 → 方差低）
     // 注意：句长「熵」在有支配性长句时反而偏低（熵 = -Σ(p×log₂p)，均匀分布熵最高），
     // 因此改用方差来衡量均匀性——方差低才是 AI 特征，方差高说明有大幅长短混合（人类特征）。

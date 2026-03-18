@@ -24,7 +24,7 @@ export type RewriteOutput = {
   humanFeatures?: string[];
 };
 
-export type RewriteMode = "normal" | "aggressive" | "repair";
+export type RewriteMode = "normal" | "aggressive" | "repair" | "entropy";
 
 export type RewriteMessageOptions = {
   /**
@@ -91,26 +91,34 @@ export function buildRewriteMessages(
     return asciiLetters / nonSpace.length > 0.55;
   })();
 
-  /** 认知标记词：根据原文语言选择对应语言版本，防止英文段落中混入中文 */
-  const cognitiveMarkers = isEnglish
-    ? [
-        "══ Cognitive Marker Words to Inject (use 1-2, reduces AI detection score) ══",
-        "The following phrases signal human writing patterns to the detection system:",
-        "【Surprise/Transition】Interestingly, Surprisingly, Unexpectedly, It is worth reflecting on",
-        "【Researcher Perspective】In my view, I would argue that, Strictly speaking, To be candid,",
-        "【Limitation Acknowledgment】Admittedly, That said, Notwithstanding, Subject to,",
-        "【Contrastive Structure】However, Nevertheless, Yet, Conversely (to introduce contrast)",
-        "⚠️ Use the researcher-perspective phrases for opinion only. Do NOT invent new fieldwork or interviews not present in the original.",
-      ]
-    : [
-        "══ 必须注入的认知标记词（至少用 1-2 个，显著降低 cog_low_density 信号） ══",
-        "以下词汇是我们 AIGC 检测系统判定为「人类写作痕迹」的关键标记，加入它们会直接降低检测风险分：",
-        "【思维转折类】出乎意料的是、令人意外的是、有趣的是、值得反思的是、耐人寻味的是",
-        "【研究者视角类】笔者认为、笔者注意到、在笔者看来、严格来说、退一步说、坦率地说",
-        "【局限承认类】需要承认的是、当然也存在、尽管如此、不过这一结论、受限于、囿于",
-        "【转折结构类】以「然而」「但是」「不过」「可是」开头的句子（用于增加段落内部结构切换）",
-        "⚠️ 注意：「笔者认为/注意到/看来」可以使用，但严禁「笔者实地/调研/走访/访谈」（不得新增未有的研究活动）",
-      ];
+  /**
+   * 认知标记词：根据改写模式和原文语言三路选择。
+   * - entropy 模式：禁用固定标记词（这些词已被 PaperPass 赋予高权重），改由模式专属 block 指导
+   * - 英文模式：注入英文认知标记词
+   * - 中文模式（默认）：注入中文认知标记词
+   */
+  const cognitiveMarkers: string[] =
+    mode === "entropy"
+      ? [] // entropy 模式的认知标记指导在专属 block 中，不重复注入固定短语
+      : isEnglish
+      ? [
+          "══ Cognitive Marker Words to Inject (use 1-2, reduces AI detection score) ══",
+          "The following phrases signal human writing patterns to the detection system:",
+          "【Surprise/Transition】Interestingly, Surprisingly, Unexpectedly, It is worth reflecting on",
+          "【Researcher Perspective】In my view, I would argue that, Strictly speaking, To be candid,",
+          "【Limitation Acknowledgment】Admittedly, That said, Notwithstanding, Subject to,",
+          "【Contrastive Structure】However, Nevertheless, Yet, Conversely (to introduce contrast)",
+          "⚠️ Use the researcher-perspective phrases for opinion only. Do NOT invent new fieldwork or interviews not present in the original.",
+        ]
+      : [
+          "══ 必须注入的认知标记词（至少用 1-2 个，显著降低 cog_low_density 信号） ══",
+          "以下词汇是我们 AIGC 检测系统判定为「人类写作痕迹」的关键标记，加入它们会直接降低检测风险分：",
+          "【思维转折类】出乎意料的是、令人意外的是、有趣的是、值得反思的是、耐人寻味的是",
+          "【研究者视角类】笔者认为、笔者注意到、在笔者看来、严格来说、退一步说、坦率地说",
+          "【局限承认类】需要承认的是、当然也存在、尽管如此、不过这一结论、受限于、囿于",
+          "【转折结构类】以「然而」「但是」「不过」「可是」开头的句子（用于增加段落内部结构切换）",
+          "⚠️ 注意：「笔者认为/注意到/看来」可以使用，但严禁「笔者实地/调研/走访/访谈」（不得新增未有的研究活动）",
+        ];
 
   return [
     {
@@ -158,6 +166,20 @@ export function buildRewriteMessages(
               "3) 不允许只做同义词替换；必须通过【结构重排】降低模板感（拆并句、调序、改变论证展开方式）。",
               "4) 允许加入【边界/条件/范围/对象】的限定描述来增强可读性，但不得引入原文不存在的新事实。",
               "5) 至少做 2 种结构动作：拆句 / 并句 / 语序倒装 / 主次重排 / 论证路径重写（择二以上）。",
+              "",
+            ]
+          : []),
+        ...(mode === "entropy"
+          ? [
+              "══ 超高熵改写模式（专为知网/PaperPass 检测设计） ══",
+              "本次改写的目标是最大化文本的统计不可预测性（熵值），使段落在语言模型困惑度指标上接近真实人类写作。",
+              "",
+              "1) 【极端句长分布】段落内必须有 ≥1 句 ≤8 字的极短句，以及 ≥1 句 ≥60 字的极长句；其余句子长度随机散布，不均匀分布比均匀分布更好。例：「这很关键。」和「但若要深究其背后的作用机制，则需要在方法论层面同时兼顾样本选取的代表性与分析框架的可操作性，二者缺一不可。」这类极差越大越好。",
+              "2) 【非线性论证顺序】不要先铺垫再结论；改为先抛出核心结论或疑问，再在后续句子中补充前提和限定条件，制造「先结论后推导」的阅读节奏（降低预期预测性）。",
+              "3) 【低频词汇替换】在不影响准确性的前提下，用同义的低频学术用语替换高频常用词（如「阐明」→「厘清」，「表明」→「折射出」，「研究」→「考察」），以提升文本在语言模型中的困惑度。",
+              "4) 【禁止使用已被检测系统加权的固定短语】以下短语已被 PaperPass 等系统赋予高权重，出现即拉高分数，本次绝对禁止：「笔者认为」「出乎意料的是」「耐人寻味的是」「值得注意的是」「值得关注的是」「由此可见」「综上所述」。改用更自然的主语视角（如「这背后的逻辑是…」「问题的关键在于…」「实际上，…」「说到底，…」）。",
+              "5) 【信息密度突刺】在段落某处突然插入一个高度具体的信息点（原文已存在的数字/引用/专有名词），用它作为论证的支点，打破均匀叙述节奏。这类具体细节周围的文字会形成「密度对比」，是人类学术写作的典型模式。",
+              "6) 【局部语气变化】在 1-2 处使用轻微的口语化或反问表达来打断纯学术文体的单一调性（如「这一点并不难理解。」「问题来了：…」「换句话说，…」），条件是不影响整体学术严谨性。",
               "",
             ]
           : []),

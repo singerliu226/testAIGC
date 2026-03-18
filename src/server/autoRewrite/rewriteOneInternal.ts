@@ -23,12 +23,13 @@ export type RewriteOneInternalResult =
     };
 
 /**
- * 单段自动改写的核心流程：最多执行 3 次 LLM 调用（aggressive → repair → sanitize 兜底）。
+ * 单段自动改写的核心流程：最多执行 4 次 LLM 调用（normal/aggressive → aggressive → repair → entropy兜底）。
  *
  * 设计原因：
  * - 自动降分场景中"能改多少改多少"比"遇拦截就失败"更重要；
- * - 3 层级联策略：先 aggressive+factLock，护栏不通则 repair，最后 sanitizeNewAnchors 兜底；
- * - 每层都先评估是否必要，避免浪费 LLM 调用。
+ * - 4 层级联策略：先 aggressive+factLock，护栏不通则 repair，最后对高风险段落使用 entropy 模式兜底；
+ * - attempt4(entropy) 仅在 auto 模式且当前最优结果 riskAfter >= 50 时触发，以最大化统计不可预测性；
+ * - entropy 模式放宽了相似度约束（只要护栏通过就接受），因为对知网/PaperPass 的熵值比表层改动更重要。
  */
 export async function rewriteOneInternal(params: {
   deps: RewriteOneInternalDeps;
@@ -256,17 +257,77 @@ export async function rewriteOneInternal(params: {
         chosenSim = sim3;
         chosenRiskAfter = riskAfter3;
       }
+
+      // === attempt4: entropy 模式 — 仅 auto + 当前最优结果仍高风险时触发 ===
+      if (params.type === "auto" && chosenRiskAfter >= 50) {
+        const attempt4 = await rewriteParagraphWithDashscope({
+          logger: params.logger,
+          paragraphText: params.baseText,
+          contextBefore: params.contextBefore,
+          contextAfter: params.contextAfter,
+          signals: params.signals,
+          rewriteMode: "entropy",
+          factLock: !params.allowFactRisk,
+          signal: params.signal,
+        });
+        const guard4Entropy = params.allowFactRisk
+          ? ({ ok: true } as const)
+          : validateRewriteGuard({
+              originalText: params.paragraph.text,
+              revisedText: attempt4.revisedText,
+            });
+        if (guard4Entropy.ok) {
+          // entropy 模式放宽相似度约束：只要护栏通过且降分效果更好就接受
+          const riskAfter4 = safeParagraphRiskScore(attempt4.revisedText, params.paragraph);
+          if (riskAfter4 < chosenRiskAfter) {
+            chosen = attempt4;
+            chosenSim = bigramJaccardSimilarity(params.paragraph.text, attempt4.revisedText);
+            chosenRiskAfter = riskAfter4;
+          }
+        }
+      }
+
       return buildSuccess();
+    }
+
+    // === guard3 失败时，先尝试 attempt4(entropy) 作为高优先兜底 ===
+    // attempt4 使用 entropy 模式；对于 auto 模式，尝试一次熵值最大化改写
+    if (params.type === "auto") {
+      const attempt4 = await rewriteParagraphWithDashscope({
+        logger: params.logger,
+        paragraphText: params.baseText,
+        contextBefore: params.contextBefore,
+        contextAfter: params.contextAfter,
+        signals: params.signals,
+        rewriteMode: "entropy",
+        factLock: !params.allowFactRisk,
+        signal: params.signal,
+      });
+      const guard4Entropy = params.allowFactRisk
+        ? ({ ok: true } as const)
+        : validateRewriteGuard({
+            originalText: params.paragraph.text,
+            revisedText: attempt4.revisedText,
+          });
+      if (guard4Entropy.ok) {
+        const riskAfter4 = safeParagraphRiskScore(attempt4.revisedText, params.paragraph);
+        if (riskAfter4 < riskAfter1 || (riskAfter4 === riskAfter1)) {
+          chosen = attempt4;
+          chosenSim = bigramJaccardSimilarity(params.paragraph.text, attempt4.revisedText);
+          chosenRiskAfter = riskAfter4;
+        }
+        return buildSuccess();
+      }
     }
 
     // === 最终兜底：自动泛化替换地点/机构后再校验 ===
     const fixed = sanitizeNewAnchors(attempt3.revisedText, guard3.violations);
     if (fixed.changed) {
-      const guard4 = validateRewriteGuard({
+      const guardSanitize = validateRewriteGuard({
         originalText: params.paragraph.text,
         revisedText: fixed.text,
       });
-      if (guard4.ok) {
+      if (guardSanitize.ok) {
         chosen = {
           ...attempt3,
           revisedText: fixed.text,
@@ -279,7 +340,7 @@ export async function rewriteOneInternal(params: {
         chosenRiskAfter = safeParagraphRiskScore(fixed.text, params.paragraph);
         return buildSuccess();
       }
-      const summary = guard4.violations
+      const summary = guardSanitize.violations
         .slice(0, 3)
         .map((v) => `${v.ruleId}:${v.evidence}`)
         .join("；");

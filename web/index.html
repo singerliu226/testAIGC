@@ -666,6 +666,11 @@ body.sidebar-open .action-bar{margin-right:400px}
       <div class="verdict-filename" id="verdictFilename"></div>
       <div id="deltaInfo" class="hidden delta-bar"></div>
       <div id="verdictSuggestion" class="hidden" style="margin-top:14px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.7;display:flex;align-items:flex-start;gap:8px"></div>
+      <div id="platformNotice" class="hidden" style="margin-top:10px;padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.8;background:var(--g100,#f3f4f6);color:var(--g600,#4b5563);border-left:3px solid var(--g300,#d1d5db)">
+        <div style="font-weight:600;margin-bottom:4px;color:var(--g700,#374151)">📊 各平台检测预期说明</div>
+        <div><strong>知网（CNKI）</strong>：与本工具检测原理相似，经过 1-2 轮改写后，大多数文档可降至 30% 以下（知网高风险线）。</div>
+        <div><strong>PaperPass / 万方</strong>：使用神经网络语言模型的困惑度（perplexity）检测，AI 改写后的文本仍可能保留统计指纹，自动降重可显著改善但无法保证通过。若 PaperPass 结果仍偏高，建议手动修改 3-5 个关键段落，加入具体数据、个人研究观察或口语化表述，效果更佳。</div>
+      </div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
         <button class="btn btn-primary hidden" id="continueRewriteTop">
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg>
@@ -1015,7 +1020,7 @@ const $ = (id) => document.getElementById(id);
 const out=$("out"),uploadBtn=$("upload"),rewriteToTargetBtn=$("rewriteToTarget"),cancelBtn=$("cancel"),fileInput=$("file"),exportLink=$("export"),exportTop=$("exportTop"),balanceEl=$("balance"),estimateEl=$("estimate"),estimateWrap=$("estimateWrap"),topupBtn=$("topup"),recheckBtn=$("recheck"),historyBtn=$("history"),privacyBtn=$("privacy"),historyModal=$("historyModal"),historyClose=$("historyClose"),historyBody=$("historyBody"),privacyModal=$("privacyModal"),privacyClose=$("privacyClose"),overviewCard=$("overviewCard"),reportCard=$("reportCard"),tbody=$("tbody"),minScore=$("minScore"),limitationsEl=$("limitations"),selectShownBtn=$("selectShown"),clearSelBtn=$("clearSel"),actionBar=$("actionBar"),selCountEl=$("selCount"),deltaInfo=$("deltaInfo"),dropZone=$("dropZone"),uploadProgress=$("uploadProgress"),uploadProgressBar=$("uploadProgressBar");
 const rwConfirmModal=$("rwConfirmModal"),rwConfirmStats=$("rwConfirmStats"),rwConfirmNotices=$("rwConfirmNotices"),rwConfirmOkBtn=$("rwConfirmOk"),rwConfirmCancelBtn=$("rwConfirmCancel"),rwConfirmCloseBtn=$("rwConfirmClose");
 const rwFailModal=$("rwFailModal"),rwFailContent=$("rwFailContent"),rwFailManualBtn=$("rwFailManual"),rwFailRiskBtn=$("rwFailRisk"),rwFailCloseBtn=$("rwFailClose");
-const verdictIcon=$("verdictIcon"),verdictTitle=$("verdictTitle"),verdictDesc=$("verdictDesc"),verdictBarFill=$("verdictBarFill"),verdictBarLabel=$("verdictBarLabel"),verdictFilename=$("verdictFilename"),emptyState=$("emptyState"),verdictSuggestion=$("verdictSuggestion"),continueRewriteTop=$("continueRewriteTop");
+const verdictIcon=$("verdictIcon"),verdictTitle=$("verdictTitle"),verdictDesc=$("verdictDesc"),verdictBarFill=$("verdictBarFill"),verdictBarLabel=$("verdictBarLabel"),verdictFilename=$("verdictFilename"),emptyState=$("emptyState"),verdictSuggestion=$("verdictSuggestion"),continueRewriteTop=$("continueRewriteTop"),platformNotice=$("platformNotice");
 const tabFilter=$("tabFilter"),countAll=$("countAll"),countMedium=$("countMedium"),countHigh=$("countHigh");
 const chatSidebar=$("chatSidebar"),chatCloseBtn=$("chatClose"),chatParaLabel=$("chatParaLabel"),chatParaPreview=$("chatParaPreview"),chatSuggestionsEl=$("chatSuggestions"),chatMessagesEl=$("chatMessages"),chatInput=$("chatInput"),chatSendBtn=$("chatSend");
 const actionBarToggleBtn=$("actionBarToggle"),actionBarToggleIcon=$("actionBarToggleIcon"),actionBarToggleLabel=$("actionBarToggleLabel");
@@ -1536,6 +1541,8 @@ function render(){
     verdictSuggestion.style.background=suggBg;
     verdictSuggestion.style.color=suggColor;
     verdictSuggestion.classList.remove("hidden");
+    if(hasRevised) platformNotice.classList.remove("hidden");
+    else platformNotice.classList.add("hidden");
     continueRewriteTop.classList.remove("hidden");
     continueRewriteTop.innerHTML=(hasRevised
       ?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg> 继续降重'
@@ -1546,8 +1553,10 @@ function render(){
       verdictSuggestion.style.background="var(--ok-bg,#f0fdf4)";
       verdictSuggestion.style.color="var(--ok)";
       verdictSuggestion.classList.remove("hidden");
+      platformNotice.classList.remove("hidden");
     }else{
       verdictSuggestion.classList.add("hidden");
+      platformNotice.classList.add("hidden");
     }
     continueRewriteTop.classList.add("hidden");
   }
