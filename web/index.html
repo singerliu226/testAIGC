@@ -666,10 +666,10 @@ body.sidebar-open .action-bar{margin-right:400px}
       <div class="verdict-filename" id="verdictFilename"></div>
       <div id="deltaInfo" class="hidden delta-bar"></div>
       <div id="verdictSuggestion" class="hidden" style="margin-top:14px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.7;display:flex;align-items:flex-start;gap:8px"></div>
-      <div id="platformNotice" class="hidden" style="margin-top:10px;padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.8;background:var(--g100,#f3f4f6);color:var(--g600,#4b5563);border-left:3px solid var(--g300,#d1d5db)">
-        <div style="font-weight:600;margin-bottom:4px;color:var(--g700,#374151)">📊 各平台检测预期说明</div>
-        <div><strong>知网（CNKI）</strong>：与本工具检测原理相似，经过 1-2 轮改写后，大多数文档可降至 30% 以下（知网高风险线）。</div>
-        <div><strong>PaperPass / 万方</strong>：使用神经网络语言模型的困惑度（perplexity）检测，AI 改写后的文本仍可能保留统计指纹，自动降重可显著改善但无法保证通过。若 PaperPass 结果仍偏高，建议手动修改 3-5 个关键段落，加入具体数据、个人研究观察或口语化表述，效果更佳。</div>
+      <div id="platformNotice" class="hidden" style="margin-top:10px;padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.8;background:#eff6ff;color:#1e40af;border-left:3px solid #3b82f6">
+        <div style="font-weight:600;margin-bottom:4px">ℹ️ 各平台AI检测结果说明</div>
+        <div>・ <strong>知网（CNKI）</strong>：与本工具原理相似，降重 1-2 轮后通常可降至 30% 以下。</div>
+        <div>・ <strong>PaperPass / 万方</strong>：采用神经网络困惑度检测，AI 改写后可能仍偏高。若结果仍高，建议手动修改几个关键段落，加入具体数据或个人观察，效果更佳。</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
         <button class="btn btn-primary hidden" id="continueRewriteTop">
@@ -1541,8 +1541,7 @@ function render(){
     verdictSuggestion.style.background=suggBg;
     verdictSuggestion.style.color=suggColor;
     verdictSuggestion.classList.remove("hidden");
-    if(hasRevised) platformNotice.classList.remove("hidden");
-    else platformNotice.classList.add("hidden");
+    platformNotice.classList.remove("hidden");
     continueRewriteTop.classList.remove("hidden");
     continueRewriteTop.innerHTML=(hasRevised
       ?'<svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v4"/><path d="M12 18v4"/><path d="M4.93 4.93l2.83 2.83"/><path d="M16.24 16.24l2.83 2.83"/><path d="M2 12h4"/><path d="M18 12h4"/><path d="M4.93 19.07l2.83-2.83"/><path d="M16.24 7.76l2.83-2.83"/><circle cx="12" cy="12" r="3"/></svg> 继续降重'
@@ -1553,11 +1552,10 @@ function render(){
       verdictSuggestion.style.background="var(--ok-bg,#f0fdf4)";
       verdictSuggestion.style.color="var(--ok)";
       verdictSuggestion.classList.remove("hidden");
-      platformNotice.classList.remove("hidden");
     }else{
       verdictSuggestion.classList.add("hidden");
-      platformNotice.classList.add("hidden");
     }
+    platformNotice.classList.remove("hidden");
     continueRewriteTop.classList.add("hidden");
   }
 
