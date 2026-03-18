@@ -32,6 +32,11 @@ export type RewriteParams = {
    * 默认建议：自动降分的强力改写阶段启用，以提升降幅并减少护栏拦截。
    */
   factLock?: boolean;
+  /**
+   * Job 级 AbortSignal，用于在 job 超时/取消时立即终止 in-flight HTTP 连接。
+   * 不传时行为与之前相同（依赖 SDK 内置 timeout）。
+   */
+  signal?: AbortSignal;
 };
 
 export type RewriteOutputWithUsage = RewriteOutput & { usage?: LlmUsage };
@@ -68,6 +73,7 @@ export async function rewriteParagraphWithDashscope(
     model: cfg.model,
     purpose,
     temperature,
+    signal: params.signal,
     messages: buildRewriteMessages({
       paragraphText,
       contextBefore: params.contextBefore,
@@ -96,6 +102,7 @@ export async function rewriteParagraphWithDashscope(
         model: cfg.model,
         purpose: purpose + ".fallback",
         temperature,
+        signal: params.signal,
         messages: buildRewriteMessages({
           paragraphText: params.paragraphText,
           contextBefore: params.contextBefore,

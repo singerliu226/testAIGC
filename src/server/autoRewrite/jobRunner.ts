@@ -111,14 +111,35 @@ export async function runAutoRewriteJob(params: {
    * - 35s 时大量段落仅完成 1 次 LLM 调用就超时，guard 未通过的段落无法进入 repair，
    *   导致批量段落以 BATCH_ERROR 计入失败（实测失败率 83-100%）；
    * - 恢复为 90s，覆盖 3次 × 25s + 网络抖动，保证 repair 阶段有足够时间；
-   * - 心跳机制已替代 AbortController，防止前端/管理员误判为卡死；
-   * - 最坏情况：60段 / 3并发 = 20批 × 90s = 约 30分钟，受 JOB_MAX_DURATION_MS=25min 兜底收尾。
+   * - 最坏情况：60段 / 3并发 = 20批 × 90s ≈ 30分钟，受 JOB_MAX_DURATION_MS=25min + AbortController 兜底。
    */
   const SEGMENT_TIMEOUT_MS = 90_000;
 
-  /** 整个 job 的最长运行时间（ms）。超过后自动收尾，避免长期占用服务器资源。 */
+  /** 整个 job 的最长运行时间（ms）。超过后 abort() 所有 in-flight LLM 请求并收尾。 */
   const JOB_MAX_DURATION_MS = 25 * 60 * 1000; // 25 分钟
   const jobStartedAt = Date.now();
+
+  /**
+   * Job 级 AbortController：当 job 整体超时时，调用 abort() 立即终止所有 in-flight LLM HTTP 请求。
+   *
+   * 设计原因：
+   * - 原有 JOB_MAX_DURATION_MS 检查只在每批次开始前执行，若当前批次 HTTP 请求挂死
+   *   （TCP 已建立但服务端停止发送数据），该检查永远没机会运行，任务无限期挂起；
+   * - OpenAI SDK 的 `timeout` 选项依赖 socket.setTimeout()（空闲超时），在 Zeabur
+   *   反向代理下可能因 keepalive 帧重置空闲计时而失效；
+   * - AbortController.abort() 直接调用 undici/node-fetch 的请求取消路径，
+   *   立即关闭 TCP 连接，保证任务在 JOB_MAX_DURATION_MS 内必然终止。
+   */
+  const jobAbortController = new AbortController();
+  const jobAbortTimer = setTimeout(() => {
+    log.warn("Job AbortController fired: aborting all in-flight LLM requests", {
+      sessionId: params.sessionId,
+      jobId: params.jobId,
+      elapsedMs: Date.now() - jobStartedAt,
+    });
+    jobTimedOut = true;
+    jobAbortController.abort();
+  }, JOB_MAX_DURATION_MS);
 
   /**
    * 将当前已改写结果保存到 session。
@@ -372,6 +393,7 @@ export async function runAutoRewriteJob(params: {
                   signals: (c.signals ?? []) as any,
                   riskBefore: c.riskScore,
                   allowFactRisk: params.body.allowFactRisk,
+                  signal: jobAbortController.signal,
                 }),
                 segmentTimeout,
               ]);
@@ -458,6 +480,7 @@ export async function runAutoRewriteJob(params: {
       if (noImproveRounds >= params.body.stopNoImproveRounds && remainingCandidates === 0) break;
     }
 
+    clearTimeout(jobAbortTimer); // 正常完成时取消超时定时器
     const finalReport = detectAigcRisk(mergeParagraphs(paragraphs, updated));
     const revision = (session.revision ?? 0) + 1;
     const doneAt = Date.now();
@@ -497,6 +520,7 @@ export async function runAutoRewriteJob(params: {
       },
     });
   } catch (e) {
+    clearTimeout(jobAbortTimer); // 异常退出时也要清理定时器
     const doneAt = Date.now();
     const err = e as unknown as HttpError;
     const latestSession = params.store.get(params.sessionId);

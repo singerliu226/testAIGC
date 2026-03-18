@@ -44,6 +44,8 @@ export async function rewriteOneInternal(params: {
   signals: FindingSignal[];
   riskBefore: number;
   allowFactRisk?: boolean;
+  /** Job 级 AbortSignal，abort() 后立即终止所有 in-flight LLM HTTP 请求 */
+  signal?: AbortSignal;
 }): Promise<RewriteOneInternalResult> {
   const cfg = loadBillingConfigFromEnv();
   const callId = randomUUID();
@@ -154,6 +156,7 @@ export async function rewriteOneInternal(params: {
       rewriteMode: startAggressive ? "aggressive" : "normal",
       minChangeRatio: startAggressive ? 0.35 : undefined,
       factLock: autoFactLock,
+      signal: params.signal,
     });
     const guard1 = params.allowFactRisk
       ? ({ ok: true } as const)
@@ -197,8 +200,8 @@ export async function rewriteOneInternal(params: {
       signals: params.signals,
       rewriteMode: "aggressive",
       minChangeRatio: 0.35,
-      // 强力改写阶段启用事实锚点锁定：允许更激进的结构改写，同时降低护栏拦截率
       factLock: !params.allowFactRisk,
+      signal: params.signal,
     });
     const guard2 = params.allowFactRisk
       ? ({ ok: true } as const)
@@ -233,9 +236,9 @@ export async function rewriteOneInternal(params: {
       contextAfter: params.contextAfter,
       signals: params.signals,
       rewriteMode: "repair",
-      // 修复阶段同样启用事实锁定（风险模式除外）
       factLock: !params.allowFactRisk,
       guardViolationsHint: hint,
+      signal: params.signal,
     });
     const guard3 = params.allowFactRisk
       ? ({ ok: true } as const)

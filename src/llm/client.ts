@@ -65,6 +65,15 @@ export type ChatJsonOptions = {
    * 用于日志追踪（不写正文）：例如 `rewrite.paragraph` / `judge.paragraph`。
    */
   purpose: string;
+  /**
+   * 用于强制中止 in-flight HTTP 请求的信号（来自 job 级别的 AbortController）。
+   *
+   * 设计原因：
+   * - OpenAI SDK 的 `timeout` 选项在某些反向代理（如 Zeabur）下可能无法及时关闭 TCP 连接；
+   * - 传入 `signal` 后，当 job 超时或被取消时，`controller.abort()` 立即终止所有挂起的 HTTP 请求，
+   *   防止僵尸连接堆积导致事件循环变慢，进而让 `setTimeout` 回调无法准时触发。
+   */
+  signal?: AbortSignal;
 };
 
 export type LlmUsage = {
@@ -97,13 +106,22 @@ export async function chatJson<T>(
     max_tokens: opts.maxTokens,
   };
 
+  // 当 job 级信号已触发时，立即快速失败，不发出网络请求
+  if (opts.signal?.aborted) {
+    throw Object.assign(new Error("LLM call aborted before start"), { name: "AbortError" });
+  }
+
   // 1) 尝试 response_format
   try {
-    const resp = await opts.client.chat.completions.create({
-      ...basePayload,
-      // eslint-disable-next-line @typescript-eslint/no-explicit-any
-      response_format: { type: "json_object" } as any,
-    });
+    const resp = await opts.client.chat.completions.create(
+      {
+        ...basePayload,
+        // eslint-disable-next-line @typescript-eslint/no-explicit-any
+        response_format: { type: "json_object" } as any,
+      },
+      // 将 job-level AbortSignal 传入 SDK，使其在 abort() 后立即关闭 TCP 连接
+      opts.signal ? { signal: opts.signal } : undefined
+    );
     const rawText = resp.choices?.[0]?.message?.content ?? "";
     const json = safeParseJson<T>(rawText);
     const usage = normalizeUsage(resp.usage);
@@ -154,7 +172,10 @@ export async function chatJson<T>(
   }
 
   // 2) 降级：不带 response_format，但强制提示输出 JSON（仅当 response_format 不支持时走到这里）
-  const resp2 = await opts.client.chat.completions.create(basePayload);
+  const resp2 = await opts.client.chat.completions.create(
+    basePayload,
+    opts.signal ? { signal: opts.signal } : undefined
+  );
   const rawText2 = resp2.choices?.[0]?.message?.content ?? "";
   const json2 = safeParseJson<T>(rawText2);
   const usage2 = normalizeUsage(resp2.usage);
