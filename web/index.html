@@ -2982,49 +2982,65 @@ function resumeJobPolling(sessionId,jobId){
   // ?reset 完成提示（showToast 此时已就绪）
   if(_didReset)showToast("已清除上次会话缓存，请重新上传文件","ok",5000);
 
-  // 尝试恢复上次 session（accountId 持久化于 localStorage，session 数据落盘于 DiskStore）
+  // ── 会话恢复（非阻塞）──
+  // 设计原因：
+  // - 将 session 恢复彻底与页面初始渲染解耦，上传区域始终立即可用；
+  // - 恢复期间显示进度条；超时/失败时自动清除残留引用，无需用户手动操作；
+  // - 用户看到的最坏情况：一条"已自动清除"toast，然后正常使用上传功能。
   const lastSid=localStorage.getItem(lastSessionKey);
   if(lastSid){
-    try{
-      // 超时保护：fetchSession 挂起（服务器忙/大文件）时最多等 12s，避免浏览器标签卡死
-      const sessOrTimeout=await Promise.race([
-        fetchSession(lastSid),
-        new Promise((_,rej)=>setTimeout(()=>rej(new Error("session_restore_timeout")),12000))
-      ]);
-      const sess=sessOrTimeout;
-      if(sess&&sess.ok!==false){
-        state.sessionId=lastSid;
-        state.session=sess;
-        const hasRevised=Boolean(sess.revised&&Object.keys(sess.revised).length);
-        syncExportButtons(`/api/export/${encodeURIComponent(lastSid)}`,hasRevised);
-        const rb=sess.reportBefore;
-        const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
-        state.selected=new Set(riskyIds);
-        activeFilter=riskyIds.length>0?"medium":"all";
-        render();
-        updateSelectionUI(); // rewriteToTargetBtn 在 HTML 中默认 disabled，必须在 sessionId 就绪后手动启用
-        // 若有未完成的改写任务，恢复轮询
-        const job=sess.autoRewriteJob;
-        if(job&&(job.status==="running"||job.status==="queued")){
-          resumeJobPolling(lastSid,job.jobId);
+    // 顶部进度条：告知用户正在恢复，而不是"页面卡死"
+    const restoreBar=document.createElement("div");
+    restoreBar.style.cssText="position:fixed;top:0;left:0;right:0;z-index:9000;height:3px;background:var(--pri);opacity:.85;animation:restore-slide 8s linear forwards";
+    const styleEl=document.createElement("style");
+    styleEl.textContent="@keyframes restore-slide{from{width:0}to{width:90%}}";
+    document.head.appendChild(styleEl);
+    document.body.appendChild(restoreBar);
+    const removeBar=()=>{restoreBar.remove();styleEl.remove()};
+
+    // 不 await：让 init() 立即结束，上传区域保持可交互
+    (async()=>{
+      try{
+        const sess=await Promise.race([
+          fetchSession(lastSid),
+          new Promise((_,rej)=>setTimeout(()=>rej(Object.assign(new Error("timeout"),{_restore:true})),10000))
+        ]);
+        removeBar();
+        if(sess&&sess.ok!==false){
+          // 恢复成功：加载完整会话状态
+          state.sessionId=lastSid;
+          state.session=sess;
+          const hasRevised=Boolean(sess.revised&&Object.keys(sess.revised).length);
+          syncExportButtons(`/api/export/${encodeURIComponent(lastSid)}`,hasRevised);
+          const rb=sess.reportBefore;
+          const riskyIds=(rb?.paragraphReports||[]).filter(r=>r.riskScore>=35).map(r=>r.paragraphId);
+          state.selected=new Set(riskyIds);
+          activeFilter=riskyIds.length>0?"medium":"all";
+          render();
+          updateSelectionUI();
+          const job=sess.autoRewriteJob;
+          if(job&&(job.status==="running"||job.status==="queued")){
+            resumeJobPolling(lastSid,job.jobId);
+          }
+        }else{
+          // 服务端确认会话不存在，清除本地引用
+          const isGone=sess&&(sess.error?.code==="SESSION_NOT_FOUND"||sess.code==="SESSION_NOT_FOUND");
+          if(isGone){
+            localStorage.removeItem(lastSessionKey);
+            showToast("上次会话已过期，请重新上传文件","warn",5000);
+          }
+          // 非 404 错误（临时网络问题）：保留引用，下次刷新可重试
         }
-      }else{
-        // 会话在服务器端确认不存在（ok:false / 404）才清除本地引用
-        // 网络抖动或服务器重启导致的临时失败不清除，用户刷新后可重试恢复
-        const isGone=sess&&(sess.error?.code==="SESSION_NOT_FOUND"||sess.code==="SESSION_NOT_FOUND");
-        if(isGone)localStorage.removeItem(lastSessionKey);
+      }catch(e){
+        removeBar();
+        if(e&&e._restore){
+          // 恢复超时：自动清除卡住的 session 引用，页面回到干净上传状态
+          localStorage.removeItem(lastSessionKey);
+          showToast("上次文件解析未完成已自动清除，请重新上传","warn",6000);
+        }
+        // 其他网络错误：保留引用，下次刷新重试（不打扰用户）
       }
-    }catch(e){
-      // 超时或网络错误：不清除 lastSessionKey，但给用户明确提示和一键恢复入口
-      if(String(e?.message).includes("session_restore_timeout")){
-        // 超时时用 innerHTML 允许链接渲染
-        toastEl.innerHTML='上次会话恢复超时，服务器可能繁忙。如页面无法使用，请点 <a href="?reset=1" style="color:inherit;font-weight:700;text-decoration:underline">重置页面</a>';
-        toastEl.className="toast toast-warn show";
-        clearTimeout(toastEl._tid);
-        toastEl._tid=setTimeout(()=>toastEl.classList.remove("show"),14000);
-      }
-      // 其他网络错误时保留 lastSessionKey，下次刷新重试
-    }
+    })();
   }
 })();
 </script>
