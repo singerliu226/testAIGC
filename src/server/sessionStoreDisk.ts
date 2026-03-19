@@ -94,6 +94,8 @@ export class DiskSessionStore implements SessionStore {
           hasRevised: Boolean(s.revised && Object.keys(s.revised).length),
           overallBefore: pickOverall(s.reportBefore),
           overallAfter: pickOverall(s.reportAfter),
+          overallCnkiBefore: pickCnkiOverall(s.reportBefore),
+          overallCnkiAfter: pickCnkiOverall(s.reportAfter),
         });
       } catch {
         // ignore broken items
@@ -133,6 +135,8 @@ export class DiskSessionStore implements SessionStore {
           hasRevised: Boolean(s.revised && Object.keys(s.revised).length),
           overallBefore: pickOverall(s.reportBefore),
           overallAfter: pickOverall(s.reportAfter),
+          overallCnkiBefore: pickCnkiOverall(s.reportBefore),
+          overallCnkiAfter: pickCnkiOverall(s.reportAfter),
           autoRewriteJob: s.autoRewriteJob,
         });
       } catch {
@@ -200,5 +204,18 @@ function pickOverall(report: unknown): { score: number; level: string } | null {
   const r = report as any;
   if (typeof r.overallRiskScore !== "number" || typeof r.overallRiskLevel !== "string") return null;
   return { score: r.overallRiskScore, level: r.overallRiskLevel };
+}
+
+function pickCnkiOverall(report: unknown): { score: number; level: string } | null {
+  if (!report || typeof report !== "object") return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const r = report as any;
+  if (
+    typeof r.overallCnkiPredictedScore !== "number" ||
+    typeof r.overallCnkiPredictedLevel !== "string"
+  ) {
+    return null;
+  }
+  return { score: r.overallCnkiPredictedScore, level: r.overallCnkiPredictedLevel };
 }
 

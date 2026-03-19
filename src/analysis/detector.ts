@@ -2,6 +2,9 @@ import type OpenAI from "openai";
 import type { AppLogger } from "../logger/index.js";
 import type { DocxParagraph } from "../docx/documentXml.js";
 import type { DocumentReport, FindingSignal, ParagraphReport, RiskLevel } from "../report/schema.js";
+import { computeCnkiOverallScore, computeCnkiParagraphScore, computeRawOverallScore } from "./cnkiCalibrator.js";
+import { detectCnkiRoleTags } from "./cnkiRoleFeatures.js";
+import { buildCnkiSensitiveSignals } from "./cnkiSensitiveRules.js";
 import { extractFeatures } from "./features.js";
 import { clamp, detectDocumentLanguage, tokenizeZh, unique } from "./textUtils.js";
 import { detectEnglishDocument } from "./detectEnglish.js";
@@ -446,18 +449,40 @@ export function detectAigcRisk(paragraphs: Array<Pick<DocxParagraph, "id" | "ind
 
     // ───── 计算段落风险分（含叠加加分） ─────
 
-    const baseScore = signals.reduce((a, s) => a + s.score, 0);
-    const bonus = synergyBonus(signals);
-    const riskScore = clamp(baseScore + bonus, 0, 100);
+    const rawSignals = [...signals];
+    const roleTags = detectCnkiRoleTags({
+      paragraphText: p.text,
+      paragraphIndex: i,
+      allParagraphs: paragraphs,
+    });
+    const cnkiSignals = buildCnkiSensitiveSignals({
+      paragraphText: p.text,
+      roleTags,
+    });
+    const allSignals = [...rawSignals, ...cnkiSignals];
+
+    const baseScore = rawSignals.reduce((a, s) => a + s.score, 0);
+    const bonus = synergyBonus(rawSignals);
+    const rawRiskScore = clamp(baseScore + bonus, 0, 100);
+    const cnkiRiskScore = computeCnkiParagraphScore({
+      rawRiskScore,
+      roleTags,
+      signals: allSignals,
+      text: p.text,
+    });
 
     return {
       paragraphId: p.id,
       index: p.index,
       kind: p.kind,
       text: p.text,
-      riskScore,
-      riskLevel: riskLevel(riskScore),
-      signals,
+      riskScore: rawRiskScore,
+      rawRiskScore,
+      cnkiRiskScore,
+      riskLevel: riskLevel(rawRiskScore),
+      roleTags,
+      cnkiReasons: cnkiSignals.map((signal) => signal.title),
+      signals: allSignals,
     };
   });
 
@@ -466,23 +491,15 @@ export function detectAigcRisk(paragraphs: Array<Pick<DocxParagraph, "id" | "ind
   // 段落AI概率：riskScore >= 35 的段落按其 riskScore/100 计入，
   // 低于 35 的视为非AI生成（概率为 0），与知网"疑似/非疑似"二分逻辑一致。
 
-  let aiCharCount = 0;
-  let totalCharCount = 0;
-  for (const r of paragraphReports) {
-    const charLen = r.text.length;
-    totalCharCount += charLen;
-    if (r.riskScore >= 35) {
-      aiCharCount += charLen * (r.riskScore / 100);
-    }
-  }
-  const overallRiskScore = totalCharCount > 0
-    ? clamp(Math.round((aiCharCount / totalCharCount) * 100), 0, 100)
-    : 0;
+  const overallRiskScore = computeRawOverallScore(paragraphReports);
+  const overallCnkiPredictedScore = computeCnkiOverallScore(paragraphReports);
 
   return {
     generatedAt: Date.now(),
     overallRiskScore,
     overallRiskLevel: riskLevel(overallRiskScore),
+    overallCnkiPredictedScore,
+    overallCnkiPredictedLevel: riskLevel(overallCnkiPredictedScore),
     paragraphReports,
     limitations: [
       "该检测是「风险提示」而非定性证据：高分不等于一定使用了AI，低分也不等于一定未使用AI。",

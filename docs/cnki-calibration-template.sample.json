@@ -1,0 +1,18 @@
+{
+  "documentId": "sample-yyyymmdd-001",
+  "title": "某篇论文.docx",
+  "language": "zh",
+  "documentType": "undergraduate-thesis",
+  "sourceFile": "客户文件/某篇论文.docx",
+  "rawLocalScore": 26,
+  "predictedCnkiScore": 34,
+  "actualCnkiScore": 38.7,
+  "predictedHighRiskParagraphIds": ["p-14", "p-28"],
+  "actualHighRiskParagraphIds": ["p-14", "p-31"],
+  "roleTagsHit": ["literatureReview", "researchMethod"],
+  "evidence": {
+    "actualScoreSource": "知网截图或报告 PDF",
+    "actualParagraphSource": "知网标红截图与人工映射"
+  },
+  "notes": "如果暂时只有总分，没有真实高风险段标注，可删除 actualHighRiskParagraphIds 字段。"
+}

@@ -135,7 +135,11 @@ async function detectOneParagraph(params: {
       kind: paragraph.kind,
       text: paragraph.text,
       riskScore: 0,
+      rawRiskScore: 0,
+      cnkiRiskScore: 0,
       riskLevel: "low",
+      roleTags: [],
+      cnkiReasons: [],
       signals: [],
     };
   }
@@ -180,7 +184,11 @@ async function detectOneParagraph(params: {
       kind: paragraph.kind,
       text: paragraph.text,
       riskScore,
+      rawRiskScore: riskScore,
+      cnkiRiskScore: riskScore,
       riskLevel: riskLevel(riskScore),
+      roleTags: [],
+      cnkiReasons: [],
       signals,
     };
   } catch (err) {
@@ -196,7 +204,11 @@ async function detectOneParagraph(params: {
       kind: paragraph.kind,
       text: paragraph.text,
       riskScore: 0,
+      rawRiskScore: 0,
+      cnkiRiskScore: 0,
       riskLevel: "low",
+      roleTags: [],
+      cnkiReasons: [],
       signals: [],
     };
   }
@@ -276,7 +288,11 @@ export async function detectEnglishDocument(
           kind: p.kind,
           text: p.text,
           riskScore: 0,
+          rawRiskScore: 0,
+          cnkiRiskScore: 0,
           riskLevel: "low",
+          roleTags: [],
+          cnkiReasons: [],
           signals: [],
         };
       }
@@ -314,6 +330,8 @@ export async function detectEnglishDocument(
     generatedAt: Date.now(),
     overallRiskScore,
     overallRiskLevel: overallLevel,
+    overallCnkiPredictedScore: overallRiskScore,
+    overallCnkiPredictedLevel: overallLevel,
     paragraphReports,
     limitations: [
       "English detection uses LLM-based analysis (Qwen). Results may differ from Turnitin or GPTZero.",

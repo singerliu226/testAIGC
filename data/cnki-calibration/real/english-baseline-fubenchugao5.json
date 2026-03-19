@@ -1,0 +1,16 @@
+{
+  "documentId": "fuben-chugao5-cnki-20260319",
+  "title": "副本初稿5.docx",
+  "language": "en",
+  "documentType": "english-thesis",
+  "sourceFile": "客户文件/副本初稿5.docx",
+  "rawLocalScore": 14,
+  "predictedCnkiScore": 14,
+  "actualCnkiScore": 31.4,
+  "predictedHighRiskParagraphIds": [],
+  "roleTagsHit": [],
+  "evidence": {
+    "actualScoreSource": "用户在 2026-03-19 提供的知网复测结果：31.4%"
+  },
+  "notes": "当前唯一已确认的真实知网分数样本。该样本为英文论文，只能作为总分偏差基线，不应用于中文规则参数拟合。"
+}

@@ -1,0 +1,22 @@
+[
+  {
+    "documentId": "sample-zh-001",
+    "language": "zh",
+    "rawLocalScore": 18,
+    "predictedCnkiScore": 29,
+    "actualCnkiScore": 32,
+    "predictedHighRiskParagraphIds": ["p12", "p18", "p24"],
+    "actualHighRiskParagraphIds": ["p12", "p19", "p24"],
+    "roleTagsHit": ["literatureReview", "researchMethod", "chapterRoadmap"]
+  },
+  {
+    "documentId": "sample-zh-002",
+    "language": "zh",
+    "rawLocalScore": 11,
+    "predictedCnkiScore": 17,
+    "actualCnkiScore": 15,
+    "predictedHighRiskParagraphIds": ["p7"],
+    "actualHighRiskParagraphIds": ["p7"],
+    "roleTagsHit": ["researchSignificance"]
+  }
+]

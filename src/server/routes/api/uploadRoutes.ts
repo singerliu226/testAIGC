@@ -1,5 +1,7 @@
 import type { Router } from "express";
 import type { AppLogger } from "../../../logger/index.js";
+import type { CnkiRoleTag } from "../../../analysis/cnkiRoleFeatures.js";
+import type { DocumentReport } from "../../../report/schema.js";
 import type { SessionStore } from "../../sessionStore.js";
 import type multer from "multer";
 import { z } from "zod";
@@ -9,6 +11,16 @@ import { writeFile, readFile, unlink } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import { join } from "node:path";
 import { parseDocx } from "../../../docx/parser.js";
+import {
+  computeCnkiOverallScore,
+  computeCnkiParagraphScore,
+  computeRawOverallScore,
+} from "../../../analysis/cnkiCalibrator.js";
+import {
+  fuseCnkiJudgeScore,
+  shouldReviewWithCnkiJudge,
+  sortCnkiJudgeCandidates,
+} from "../../../analysis/cnkiLlmFusion.js";
 import { textToDocx } from "../../../docx/textToDocx.js";
 import { detectAigcRisk, detectAigcRiskAsync } from "../../../analysis/detector.js";
 import { createDashscopeClient, loadDashscopeConfigFromEnv } from "../../../llm/client.js";
@@ -28,6 +40,130 @@ import { estimatePointsByChars } from "../../../billing/pricing.js";
 import { randomUUID } from "node:crypto";
 
 const execFileAsync = promisify(execFile);
+
+function riskLevel(score: number): "low" | "medium" | "high" {
+  if (score >= 70) return "high";
+  if (score >= 35) return "medium";
+  return "low";
+}
+
+const VALID_CNKI_ROLE_TAGS = new Set<CnkiRoleTag>([
+  "chapterRoadmap",
+  "researchBackground",
+  "literatureReview",
+  "researchPurpose",
+  "researchSignificance",
+  "researchMethod",
+  "theoreticalFramework",
+  "limitations",
+  "futureWork",
+  "conclusionSummary",
+]);
+
+function normalizeCnkiRoleTags(roleTags: string[]): CnkiRoleTag[] {
+  return roleTags.filter((tag): tag is CnkiRoleTag => VALID_CNKI_ROLE_TAGS.has(tag as CnkiRoleTag));
+}
+
+/**
+ * 统一执行中文报告的后台 LLM 复核。
+ *
+ * 设计原因：
+ * - 文件上传与纯文字上传必须走同一条知网对齐链路，否则会出现同文不同分；
+ * - 将候选选择、动态融合、双总分回算收口到一个函数里，避免后续再次分叉。
+ */
+function startBackgroundCnkiJudgeReview(params: {
+  logger: AppLogger;
+  store: SessionStore;
+  sessionId: string;
+  reportBefore: DocumentReport;
+  label: string;
+}) {
+  const MAX_JUDGE = 40;
+  const candidatesForJudge = sortCnkiJudgeCandidates(
+    params.reportBefore.paragraphReports.filter((report) =>
+      shouldReviewWithCnkiJudge({
+        riskScore: report.riskScore,
+        cnkiRiskScore: report.cnkiRiskScore,
+        roleTags: report.roleTags,
+      })
+    )
+  ).slice(0, MAX_JUDGE);
+
+  if (candidatesForJudge.length === 0 || !process.env.DASHSCOPE_API_KEY) return;
+
+  void (async () => {
+    try {
+      params.logger.info(`${params.label}: starting background LLM judge`, {
+        sessionId: params.sessionId,
+        candidateCount: candidatesForJudge.length,
+      });
+
+      const judgeResults = await Promise.allSettled(
+        candidatesForJudge.map((report) =>
+          judgeParagraphWithDashscope({
+            logger: params.logger,
+            paragraphText: report.text,
+            signals: report.signals,
+            roleTags: report.roleTags,
+            cnkiReasons: report.cnkiReasons,
+          })
+        )
+      );
+
+      for (let index = 0; index < candidatesForJudge.length; index += 1) {
+        const result = judgeResults[index];
+        if (result.status !== "fulfilled") continue;
+
+        const paraReport = candidatesForJudge[index];
+        paraReport.riskScore = fuseCnkiJudgeScore({
+          rawRiskScore: paraReport.riskScore,
+          judgeRiskScore: result.value.riskScore0to100,
+          roleTags: paraReport.roleTags,
+        });
+        paraReport.rawRiskScore = paraReport.riskScore;
+        paraReport.cnkiRiskScore = computeCnkiParagraphScore({
+          rawRiskScore: paraReport.riskScore,
+          roleTags: normalizeCnkiRoleTags(paraReport.roleTags ?? []),
+          signals: paraReport.signals,
+          text: paraReport.text,
+        });
+        paraReport.riskLevel = riskLevel(paraReport.riskScore);
+
+        if (result.value.topReasons?.length) {
+          paraReport.signals.push({
+            signalId: "llm_judge_review",
+            category: "aiPattern",
+            title: "AI 复核判断",
+            evidence: result.value.topReasons.slice(0, 3),
+            suggestion: result.value.shouldRewrite
+              ? "建议对此段落进行改写以降低 AI 痕迹。"
+              : "AI 复核认为此段落风险可控。",
+            score: 0,
+          });
+        }
+      }
+
+      params.reportBefore.overallRiskScore = computeRawOverallScore(params.reportBefore.paragraphReports);
+      params.reportBefore.overallRiskLevel = riskLevel(params.reportBefore.overallRiskScore);
+      params.reportBefore.overallCnkiPredictedScore =
+        computeCnkiOverallScore(params.reportBefore.paragraphReports);
+      params.reportBefore.overallCnkiPredictedLevel = riskLevel(
+        params.reportBefore.overallCnkiPredictedScore
+      );
+
+      params.store.update(params.sessionId, { reportBefore: params.reportBefore });
+      params.logger.info(`${params.label}: background LLM judge completed`, {
+        sessionId: params.sessionId,
+        overallScore: params.reportBefore.overallRiskScore,
+        overallCnkiPredictedScore: params.reportBefore.overallCnkiPredictedScore,
+      });
+    } catch (err) {
+      params.logger.error(`${params.label}: background LLM judge failed`, {
+        error: String(err),
+      });
+    }
+  })();
+}
 
 /**
  * 将 .doc（旧版 OLE2 二进制格式）转换为 .docx buffer。
@@ -229,88 +365,13 @@ export function registerUploadRoutes(params: {
               }
             })();
           } else {
-            const MAX_JUDGE = 30;
-            const candidatesForJudge = reportBefore.paragraphReports
-              .filter((r) => r.riskScore >= 50)
-              .sort((a, b) => b.riskScore - a.riskScore)
-              .slice(0, MAX_JUDGE);
-
-            if (candidatesForJudge.length > 0) {
-              (async () => {
-                try {
-                  log.info("Starting background LLM judge review", {
-                    sessionId: session.sessionId,
-                    candidateCount: candidatesForJudge.length,
-                  });
-
-                  const judgeResults = await Promise.allSettled(
-                    candidatesForJudge.map((r) =>
-                      judgeParagraphWithDashscope({
-                        logger: log,
-                        paragraphText: r.text,
-                        signals: r.signals,
-                      })
-                    )
-                  );
-
-                  for (let j = 0; j < candidatesForJudge.length; j++) {
-                    const result = judgeResults[j];
-                    if (result.status !== "fulfilled") continue;
-                    const judgeOutput = result.value;
-                    const paraReport = candidatesForJudge[j];
-
-                    const fused = Math.round(
-                      paraReport.riskScore * 0.4 + judgeOutput.riskScore0to100 * 0.6
-                    );
-                    paraReport.riskScore = Math.min(100, Math.max(0, fused));
-                    paraReport.riskLevel =
-                      paraReport.riskScore >= 70
-                        ? "high"
-                        : paraReport.riskScore >= 35
-                          ? "medium"
-                          : "low";
-
-                    if (judgeOutput.topReasons?.length) {
-                      paraReport.signals.push({
-                        signalId: "llm_judge_review",
-                        category: "aiPattern",
-                        title: "AI 复核判断",
-                        evidence: judgeOutput.topReasons.slice(0, 3),
-                        suggestion: judgeOutput.shouldRewrite
-                          ? "建议对此段落进行改写以降低 AI 痕迹。"
-                          : "AI 复核认为此段落风险可控。",
-                        score: 0,
-                      });
-                    }
-                  }
-
-                  let aiChars = 0, allChars = 0;
-                  for (const r of reportBefore.paragraphReports) {
-                    const len = r.text.length;
-                    allChars += len;
-                    if (r.riskScore >= 35) aiChars += len * (r.riskScore / 100);
-                  }
-                  reportBefore.overallRiskScore =
-                    allChars > 0
-                      ? Math.min(100, Math.max(0, Math.round((aiChars / allChars) * 100)))
-                      : 0;
-                  reportBefore.overallRiskLevel =
-                    reportBefore.overallRiskScore >= 70
-                      ? "high"
-                      : reportBefore.overallRiskScore >= 35
-                        ? "medium"
-                        : "low";
-
-                  params.store.update(session.sessionId, { reportBefore });
-                  log.info("Background LLM judge completed", {
-                    sessionId: session.sessionId,
-                    overallScore: reportBefore.overallRiskScore,
-                  });
-                } catch (err) {
-                  log.error("Background LLM judge failed", { error: String(err) });
-                }
-              })();
-            }
+            startBackgroundCnkiJudgeReview({
+              logger: log,
+              store: params.store,
+              sessionId: session.sessionId,
+              reportBefore,
+              label: "File upload",
+            });
           }
         }
       })();
@@ -529,80 +590,13 @@ export function registerUploadTextRoute(params: {
         detectionChargedPoints: detectionChargedPoints > 0 ? detectionChargedPoints : undefined,
       });
 
-      // ── LLM 复核在后台异步执行（与 /upload 逻辑完全相同） ──
-      const MAX_JUDGE = 30;
-      const candidatesForJudge = reportBefore.paragraphReports
-        .filter((r) => r.riskScore >= 50)
-        .sort((a, b) => b.riskScore - a.riskScore)
-        .slice(0, MAX_JUDGE);
-
-      if (candidatesForJudge.length > 0 && process.env.DASHSCOPE_API_KEY) {
-        (async () => {
-          try {
-            log.info("Text upload: starting background LLM judge", {
-              sessionId: session.sessionId,
-              candidateCount: candidatesForJudge.length,
-            });
-
-            const judgeResults = await Promise.allSettled(
-              candidatesForJudge.map((r) =>
-                judgeParagraphWithDashscope({
-                  logger: log,
-                  paragraphText: r.text,
-                  signals: r.signals,
-                })
-              )
-            );
-
-            for (let j = 0; j < candidatesForJudge.length; j++) {
-              const result = judgeResults[j];
-              if (result.status !== "fulfilled") continue;
-              const judgeOutput = result.value;
-              const paraReport = candidatesForJudge[j];
-
-              const fused = Math.round(
-                paraReport.riskScore * 0.4 + judgeOutput.riskScore0to100 * 0.6
-              );
-              paraReport.riskScore = Math.min(100, Math.max(0, fused));
-              paraReport.riskLevel =
-                paraReport.riskScore >= 70 ? "high" : paraReport.riskScore >= 35 ? "medium" : "low";
-
-              if (judgeOutput.topReasons?.length) {
-                paraReport.signals.push({
-                  signalId: "llm_judge_review",
-                  category: "aiPattern",
-                  title: "AI 复核判断",
-                  evidence: judgeOutput.topReasons.slice(0, 3),
-                  suggestion: judgeOutput.shouldRewrite
-                    ? "建议对此段落进行改写以降低 AI 痕迹。"
-                    : "AI 复核认为此段落风险可控。",
-                  score: 0,
-                });
-              }
-            }
-
-            // 重新计算文档整体分
-            let aiChars = 0, allChars = 0;
-            for (const r of reportBefore.paragraphReports) {
-              const len = r.text.length;
-              allChars += len;
-              if (r.riskScore >= 35) aiChars += len * (r.riskScore / 100);
-            }
-            reportBefore.overallRiskScore =
-              allChars > 0 ? Math.min(100, Math.max(0, Math.round((aiChars / allChars) * 100))) : 0;
-            reportBefore.overallRiskLevel =
-              reportBefore.overallRiskScore >= 70 ? "high" : reportBefore.overallRiskScore >= 35 ? "medium" : "low";
-
-            params.store.update(session.sessionId, { reportBefore });
-            log.info("Text upload: background LLM judge completed", {
-              sessionId: session.sessionId,
-              overallScore: reportBefore.overallRiskScore,
-            });
-          } catch (err) {
-            log.error("Text upload: background LLM judge failed", { error: String(err) });
-          }
-        })();
-      }
+      startBackgroundCnkiJudgeReview({
+        logger: log,
+        store: params.store,
+        sessionId: session.sessionId,
+        reportBefore,
+        label: "Text upload",
+      });
     })
   );
 }

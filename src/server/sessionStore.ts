@@ -212,6 +212,8 @@ export type SessionIndexItem = {
   hasRevised: boolean;
   overallBefore?: { score: number; level: string } | null;
   overallAfter?: { score: number; level: string } | null;
+  overallCnkiBefore?: { score: number; level: string } | null;
+  overallCnkiAfter?: { score: number; level: string } | null;
 };
 
 /** 管理员活跃看板用的轻量会话摘要（不含 Buffer 字段） */
@@ -288,6 +290,8 @@ export class InMemorySessionStore {
         hasRevised: Boolean(s.revised && Object.keys(s.revised).length),
         overallBefore: pickOverall(s.reportBefore),
         overallAfter: pickOverall(s.reportAfter),
+        overallCnkiBefore: pickCnkiOverall(s.reportBefore),
+        overallCnkiAfter: pickCnkiOverall(s.reportAfter),
       });
     }
     items.sort((a, b) => b.createdAt - a.createdAt);
@@ -309,6 +313,8 @@ export class InMemorySessionStore {
         hasRevised: Boolean(s.revised && Object.keys(s.revised).length),
         overallBefore: pickOverall(s.reportBefore),
         overallAfter: pickOverall(s.reportAfter),
+        overallCnkiBefore: pickCnkiOverall(s.reportBefore),
+        overallCnkiAfter: pickCnkiOverall(s.reportAfter),
         autoRewriteJob: s.autoRewriteJob,
       });
     }
@@ -323,5 +329,18 @@ function pickOverall(report: unknown): { score: number; level: string } | null {
   const r = report as any;
   if (typeof r.overallRiskScore !== "number" || typeof r.overallRiskLevel !== "string") return null;
   return { score: r.overallRiskScore, level: r.overallRiskLevel };
+}
+
+function pickCnkiOverall(report: unknown): { score: number; level: string } | null {
+  if (!report || typeof report !== "object") return null;
+  // eslint-disable-next-line @typescript-eslint/no-explicit-any
+  const r = report as any;
+  if (
+    typeof r.overallCnkiPredictedScore !== "number" ||
+    typeof r.overallCnkiPredictedLevel !== "string"
+  ) {
+    return null;
+  }
+  return { score: r.overallCnkiPredictedScore, level: r.overallCnkiPredictedLevel };
 }
 

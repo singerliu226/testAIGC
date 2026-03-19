@@ -7,7 +7,8 @@ export type CategoryId =
   | "verifiability"
   | "structureFormat"
   | "aiPattern"
-  | "cognitiveFeatures";
+  | "cognitiveFeatures"
+  | "cnkiSensitive";
 
 export type FindingSignal = {
   signalId: string;
@@ -40,8 +41,17 @@ export type ParagraphReport = {
   kind: "paragraph" | "tableCellParagraph" | "imageParagraph";
   /** 原段落文本（可用于 UI 展示；如担心隐私可在服务端做截断） */
   text: string;
+  /** 兼容旧前端的原始风险分别名。 */
   riskScore: number; // 0..100
+  /** 原始规则/LLM 融合分，供旧逻辑与解释性继续使用。 */
+  rawRiskScore: number;
+  /** 更贴近知网总分口径的段落代理分。 */
+  cnkiRiskScore: number;
   riskLevel: RiskLevel;
+  /** 段落承担的论文角色，可多选。 */
+  roleTags: string[];
+  /** 知网专项信号的解释性原因。 */
+  cnkiReasons: string[];
   signals: FindingSignal[];
 };
 
@@ -49,6 +59,8 @@ export type DocumentReport = {
   generatedAt: number;
   overallRiskScore: number;
   overallRiskLevel: RiskLevel;
+  overallCnkiPredictedScore: number;
+  overallCnkiPredictedLevel: RiskLevel;
   paragraphReports: ParagraphReport[];
   /**
    * 固定输出的局限说明，避免用户将“检测分数”当作定性证据。

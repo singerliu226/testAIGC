@@ -53,6 +53,8 @@ export type RewriteMessageOptions = {
 export type JudgeInput = {
   paragraphText: string;
   signals: FindingSignal[];
+  roleTags?: string[];
+  cnkiReasons?: string[];
 };
 
 export type JudgeOutput = {
@@ -250,10 +252,13 @@ export function buildJudgeMessages(input: JudgeInput): OpenAI.Chat.Completions.C
       content: [
         "你是严格的 AIGC 文本检测复核专家。你需要基于段落文本和已触发的规则信号，独立判断该段落是否由 AI 生成。",
         "",
+        "如果输入中提供了 roleTags 与 cnkiReasons，请把它们视为“中文论文角色线索”，重点判断该段是否属于知网更敏感的模板段。",
+        "",
         "评判标准（偏严格，宁可误报不可漏报）：",
         "- 重点关注：行文节奏是否过于均匀、用词是否缺乏个人风格、论证是否空洞套话化、结构是否过于模板化",
         "- AI 文本典型特征：对称结构多、连接词密集、抽象名词堆叠、段首套话、空洞总结、缺少具体数据和个人观察",
         "- 人类文本典型特征：句长波动大、有口语化表达或个人见解、引用具体数据/案例、有思维跳跃或修辞变化",
+        "- 中文论文额外关注：研究意义、研究方法、章节安排、文献综述、局限/展望、理论介绍等段落是否过于像固定论文模板",
         "",
         "评分口径：",
         "- 90-100：几乎确定是 AI 生成，多个强信号同时存在",
@@ -272,6 +277,8 @@ export function buildJudgeMessages(input: JudgeInput): OpenAI.Chat.Completions.C
         {
           paragraphText: input.paragraphText,
           ruleSignals: signalSummary,
+          roleTags: input.roleTags ?? [],
+          cnkiReasons: input.cnkiReasons ?? [],
         },
         null,
         2

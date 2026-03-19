@@ -11,6 +11,8 @@ export type JudgeParams = {
   logger: AppLogger;
   paragraphText: string;
   signals: FindingSignal[];
+  roleTags?: string[];
+  cnkiReasons?: string[];
 };
 
 /**
@@ -36,6 +38,8 @@ export async function judgeParagraphWithDashscope(params: JudgeParams): Promise<
     messages: buildJudgeMessages({
       paragraphText: params.paragraphText,
       signals: params.signals,
+      roleTags: params.roleTags,
+      cnkiReasons: params.cnkiReasons,
     }),
   });
 
