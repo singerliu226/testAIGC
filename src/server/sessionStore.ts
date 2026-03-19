@@ -169,10 +169,12 @@ export type SessionRecord = {
        */
       processed: number;
       maxTotal: number;
-      /** 成功改写的段落数（可选，用于更直观的进度反馈） */
+      /** 最终有效保留的段落数（可选，用于更直观的进度反馈） */
       succeeded?: number;
       /** 失败/被拦截的段落数（可选，用于更直观的进度反馈） */
       failed?: number;
+      /** 生成成功但未降分、因此被自动丢弃的段落数 */
+      discarded?: number;
       overallBefore?: number;
       overallCurrent?: number;
       currentParagraphId?: string;
@@ -180,6 +182,10 @@ export type SessionRecord = {
       lastMessage?: string;
       /** 当 0 候选时记录的具体耗尽原因，前端可据此显示专属提示而非通用"完成" */
       exhaustedReason?: string;
+      /** 若整轮回滚，记录回滚原因与数量，便于前端解释“为什么没保存” */
+      rollbackApplied?: boolean;
+      rollbackReason?: string;
+      keptBeforeRollback?: number;
     };
     /**
      * 任务内的逐段失败信息（不中断整体任务）。

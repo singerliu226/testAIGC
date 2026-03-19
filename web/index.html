@@ -2157,6 +2157,7 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
       const maxTotal=Number(p.maxTotal||1);
       const rounds=Number(p.roundsUsed||0);
       const succ=typeof p.succeeded==="number"?p.succeeded:null;
+      const discarded=typeof p.discarded==="number"?p.discarded:null;
       const fail=typeof p.failed==="number"?p.failed:null;
       const overall=typeof p.overallCurrent==="number"?p.overallCurrent:null;
       const msg=p.lastMessage||"运行中…";
@@ -2165,7 +2166,7 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
       const pct=maxTotal>0?Math.min(99,Math.round((processed/maxTotal)*100)):0;
       rwProgress.classList.add("visible");
       rwProgressFill.style.width=pct+"%";
-      const sf=(succ!==null||fail!==null)?`｜成功 ${succ??0}｜失败 ${fail??0}`:"";
+      const sf=(succ!==null||discarded!==null||fail!==null)?`｜有效 ${succ??0}｜丢弃 ${discarded??0}｜失败 ${fail??0}`:"";
       rwProgressText.textContent=`${msg}${sf}（${pct}%）`;
 
       if(job.status==="completed"){
@@ -2174,14 +2175,23 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
         const pp=job.progress||{};
         const exhausted=pp.exhaustedReason;
         const succCount=Number(pp.succeeded||0);
+        const discardedCount=Number(pp.discarded||0);
         const procCount=Number(pp.processed||0);
         const roundCount=Number(pp.roundsUsed||0);
+        const rollbackApplied=Boolean(pp.rollbackApplied);
+        const rollbackReason=pp.rollbackReason||"本轮全文 AI 率未下降，已自动回滚并保留原稿";
+        const keptBeforeRollback=Number(pp.keptBeforeRollback||0);
         const didNothing=roundCount===0&&procCount===0;
-        const allFailed=procCount>0&&succCount===0;
+        const noEffectiveKeep=procCount>0&&succCount===0&&!rollbackApplied;
 
-        if(didNothing||allFailed){
+        if(didNothing||noEffectiveKeep||rollbackApplied){
           rwProgressFill.style.width="0%";
-          rwProgressText.textContent=didNothing?"无可改写段落":`已尝试 ${procCount} 段均未成功`;
+          rwProgressText.textContent=
+            didNothing
+              ?"无可改写段落"
+              :rollbackApplied
+              ?"本轮未取得有效下降，已自动回滚"
+              :`已尝试 ${procCount} 段，未保留有效结果`;
         }else{
           rwProgressFill.style.width="100%";
           rwProgressText.textContent="已完成（100%）";
@@ -2202,9 +2212,11 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
             syncExportButtons(exportHref,true);
           }
 
-          if(didNothing||allFailed){
-            const reason=exhausted||(allFailed
-              ?`本次尝试改写 ${procCount} 段均未通过校验（被拦截或超时），AI 率未变化`
+          if(didNothing||noEffectiveKeep||rollbackApplied){
+            const reason=rollbackApplied
+              ?`${rollbackReason}${keptBeforeRollback>0?`（本轮曾命中 ${keptBeforeRollback} 段候选，但全文结果未变好）`:""}`
+              :exhausted||(noEffectiveKeep
+              ?`本次尝试 ${procCount} 段，均未形成可保留结果（丢弃 ${discardedCount}，失败 ${fails.length}），AI 率未变化`
               :"所有高风险段落均已达到改写上限，或当前 AI 率已满足目标");
             showToast("⚠️ "+reason,"warn",10000);
             return; // finally will still run
@@ -2250,7 +2262,7 @@ rewriteToTargetBtn.addEventListener("click",async()=>{
             else if(remainUnlocked>0){hint=`仍有 ${remainUnlocked} 个高风险段落可继续改写，建议再次点击继续降低。`;}
             else if(remainHigh>0){hint=`剩余 ${remainHigh} 个高风险段落已达改写上限，建议结合"建议"栏手动修改。`;}
             const dText=d<0?`降低 ${Math.abs(d)}%`:(d===0?"无变化":`上升 ${d}%`);
-            showToast(`本次降重：${Math.round(beforeScore)}% → ${Math.round(afterScore)}%（${dText}）${hint?"  "+hint:""}`,d<=0?"ok":"warn",8000);
+            showToast(`本次降重：${Math.round(beforeScore)}% → ${Math.round(afterScore)}%（${dText}）｜有效 ${succCount}｜丢弃 ${discardedCount}｜失败 ${fails.length}${hint?"  "+hint:""}`,d<=0?"ok":"warn",8000);
           }else{
             showToast("自动降分完成","ok",4000);
           }
@@ -2994,7 +3006,10 @@ function resumeJobPolling(sessionId,jobId){
           if(job.status==="completed"){
             const succ3=Number(p.succeeded||0);
             const proc3=Number(p.processed||0);
-            if(proc3>0&&succ3===0)showToast("⚠️ 自动降分已尝试但所有段落均未通过校验，AI 率未变化","warn",8000);
+            const discarded3=Number(p.discarded||0);
+            const rollbackApplied3=Boolean(p.rollbackApplied);
+            if(rollbackApplied3)showToast("⚠️ 自动降分已自动回滚（刷新前启动的任务），原稿已保留","warn",8000);
+            else if(proc3>0&&succ3===0)showToast(`⚠️ 自动降分已尝试但未保留有效结果（丢弃 ${discarded3} 段），AI 率未变化`,"warn",8000);
             else showToast("自动降分完成（刷新前启动的任务）","ok",5000);
           }
           else if(job.status==="failed")showToast("自动降分失败（刷新前启动的任务）","err",5000);

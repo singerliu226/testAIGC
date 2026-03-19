@@ -16,6 +16,7 @@ import {
 import { calcFinalChargePoints, estimatePrechargePoints, loadBillingConfigFromEnv } from "../../../billing/pricing.js";
 import { randomUUID } from "node:crypto";
 import { runAutoRewriteJob } from "../../autoRewrite/jobRunner.js";
+import { finalizeAutoRewriteOutcome, shouldKeepAutoRewriteParagraph } from "../../autoRewrite/resultGuard.js";
 
 export function registerRewriteRoutes(params: { router: Router; logger: AppLogger; store: SessionStore }) {
   const router = params.router;
@@ -273,8 +274,15 @@ export function registerRewriteRoutes(params: { router: Router; logger: AppLogge
       const rewriteResults: NonNullable<(typeof session)["rewriteResults"]> = {
         ...(session.rewriteResults ?? {}),
       };
+      const initialUpdated: Record<string, string> = { ...updated };
+      const initialRewriteResults: NonNullable<(typeof session)["rewriteResults"]> = {
+        ...rewriteResults,
+      };
+      const overallBefore = detectAigcRisk(mergeParagraphs(paragraphs, updated)).overallRiskScore ?? 0;
 
       let total = 0;
+      let keptCount = 0;
+      let discardedCount = 0;
       let roundsUsed = 0;
       let bestScore = Number.POSITIVE_INFINITY;
       let noImproveRounds = 0;
@@ -357,69 +365,86 @@ export function registerRewriteRoutes(params: { router: Router; logger: AppLogge
               signals: (c.signals ?? []) as any,
               riskBefore,
             });
-
-            updated[pid] = out.revisedText;
-            const finalPoints = calcFinalChargePoints({
-              text: out.revisedText,
-              usage: out.quality.usage,
-              cfg,
-            });
-            const settle = finalPoints - prechargePoints;
-            if (!isAdmin && settle !== 0) {
-              if (settle > 0) {
-                try {
-                  ledger.charge(accountId, settle, {
-                    billing: "llm",
-                    callId,
-                    type: "auto",
-                    sessionId,
-                    paragraphId: pid,
-                    pointsExtra: settle,
-                    pointsFinal: finalPoints,
-                    usage: out.quality.usage,
-                    billingMode: cfg.mode,
-                  });
-                } catch {
+            if (shouldKeepAutoRewriteParagraph(out.quality)) {
+              updated[pid] = out.revisedText;
+              const finalPoints = calcFinalChargePoints({
+                text: out.revisedText,
+                usage: out.quality.usage,
+                cfg,
+              });
+              const settle = finalPoints - prechargePoints;
+              if (!isAdmin && settle !== 0) {
+                if (settle > 0) {
                   try {
-                    ledger.refund(accountId, prechargePoints, {
+                    ledger.charge(accountId, settle, {
                       billing: "llm",
                       callId,
                       type: "auto",
                       sessionId,
                       paragraphId: pid,
-                      reason: "settle_insufficient",
-                      pointsEstimated: prechargePoints,
+                      pointsExtra: settle,
+                      pointsFinal: finalPoints,
+                      usage: out.quality.usage,
+                      billingMode: cfg.mode,
+                    });
+                  } catch {
+                    try {
+                      ledger.refund(accountId, prechargePoints, {
+                        billing: "llm",
+                        callId,
+                        type: "auto",
+                        sessionId,
+                        paragraphId: pid,
+                        reason: "settle_insufficient",
+                        pointsEstimated: prechargePoints,
+                      });
+                    } catch {}
+                    throw new HttpError(402, "INSUFFICIENT_POINTS", "积分不足：请联系管理员充值");
+                  }
+                } else {
+                  try {
+                    ledger.refund(accountId, Math.abs(settle), {
+                      billing: "llm",
+                      callId,
+                      type: "auto",
+                      sessionId,
+                      paragraphId: pid,
+                      pointsRefund: Math.abs(settle),
+                      pointsFinal: finalPoints,
+                      usage: out.quality.usage,
+                      billingMode: cfg.mode,
                     });
                   } catch {}
-                  throw new HttpError(402, "INSUFFICIENT_POINTS", "积分不足：请联系管理员充值");
                 }
-              } else {
-                try {
-                  ledger.refund(accountId, Math.abs(settle), {
+              }
+
+              rewriteResults[pid] = {
+                revisedText: out.revisedText,
+                changeRationale: out.changeRationale,
+                riskSignalsResolved: out.riskSignalsResolved,
+                needHumanCheck: out.needHumanCheck,
+                humanFeatures: out.humanFeatures,
+                chargedPoints: finalPoints,
+                createdAt: Date.now(),
+                quality: out.quality,
+              };
+              keptCount += 1;
+            } else {
+              try {
+                if (!isAdmin) {
+                  ledger.refund(accountId, prechargePoints, {
                     billing: "llm",
                     callId,
                     type: "auto",
                     sessionId,
                     paragraphId: pid,
-                    pointsRefund: Math.abs(settle),
-                    pointsFinal: finalPoints,
-                    usage: out.quality.usage,
-                    billingMode: cfg.mode,
+                    reason: "auto_not_improved",
+                    pointsEstimated: prechargePoints,
                   });
-                } catch {}
-              }
+                }
+              } catch {}
+              discardedCount += 1;
             }
-
-            rewriteResults[pid] = {
-              revisedText: out.revisedText,
-              changeRationale: out.changeRationale,
-              riskSignalsResolved: out.riskSignalsResolved,
-              needHumanCheck: out.needHumanCheck,
-              humanFeatures: out.humanFeatures,
-              chargedPoints: finalPoints,
-              createdAt: Date.now(),
-              quality: out.quality,
-            };
             total += 1;
           } catch (e) {
             if (!isAdmin) {
@@ -464,11 +489,21 @@ export function registerRewriteRoutes(params: { router: Router; logger: AppLogge
         if (noImproveRounds >= body.stopNoImproveRounds) break;
       }
 
-      const revision = (session.revision ?? 0) + 1;
-      const reportAfter = detectAigcRisk(mergeParagraphs(paragraphs, updated));
+      const reportAfterRaw = detectAigcRisk(mergeParagraphs(paragraphs, updated));
+      const finalization = finalizeAutoRewriteOutcome({
+        overallBefore,
+        overallAfter: reportAfterRaw.overallRiskScore ?? 0,
+        keptCount,
+      });
+      const finalUpdated = finalization.rollbackApplied ? initialUpdated : updated;
+      const finalRewriteResults = finalization.rollbackApplied ? initialRewriteResults : rewriteResults;
+      const reportAfter = finalization.rollbackApplied
+        ? detectAigcRisk(mergeParagraphs(paragraphs, finalUpdated))
+        : reportAfterRaw;
+      const revision = finalization.rollbackApplied ? session.revision ?? 0 : (session.revision ?? 0) + 1;
       params.store.update(sessionId, {
-        revised: updated,
-        rewriteResults,
+        revised: finalUpdated,
+        rewriteResults: finalRewriteResults,
         reportAfter,
         revision,
         revisedDocx: undefined,
@@ -481,6 +516,10 @@ export function registerRewriteRoutes(params: { router: Router; logger: AppLogge
         targetScore: body.targetScore,
         roundsUsed,
         rewrittenCount: total,
+        keptCount: finalization.finalKeptCount,
+        discardedCount,
+        rollbackApplied: finalization.rollbackApplied,
+        keptBeforeRollback: finalization.keptBeforeRollback,
         overallAfter: reportAfter.overallRiskScore,
         exportUrl: `/api/export/${encodeURIComponent(sessionId)}`,
         reportAfter,

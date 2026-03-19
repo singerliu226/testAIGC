@@ -3,6 +3,7 @@ import type { SessionStore } from "../sessionStore.js";
 import { detectAigcRisk } from "../../analysis/detector.js";
 import type { HttpError } from "../errors.js";
 import { rewriteOneInternal, type RewriteOneInternalDeps } from "./rewriteOneInternal.js";
+import { finalizeAutoRewriteOutcome, shouldKeepAutoRewriteParagraph } from "./resultGuard.js";
 
 export type AutoRewriteParams = {
   targetScore: number;
@@ -43,6 +44,10 @@ export async function runAutoRewriteJob(params: {
   const rewriteResults: NonNullable<(typeof session)["rewriteResults"]> = {
     ...(session.rewriteResults ?? {}),
   };
+  const initialUpdated: Record<string, string> = { ...updated };
+  const initialRewriteResults: NonNullable<(typeof session)["rewriteResults"]> = {
+    ...rewriteResults,
+  };
   const failures: Array<{ paragraphId: string; paragraphIndex?: number; code: string; message: string }> = [];
 
   /**
@@ -53,6 +58,7 @@ export async function runAutoRewriteJob(params: {
    * - 超过阈值后系统自动跳过该段，并在前端预检弹窗中提示"建议手动处理"。
    */
   const rwCounts: Record<string, number> = { ...(session.paragraphRewriteCounts ?? {}) };
+  const initialRwCounts: Record<string, number> = { ...rwCounts };
   /**
    * 单段最多累计改写次数（跨多次任务的总计）。
    *
@@ -76,6 +82,9 @@ export async function runAutoRewriteJob(params: {
         roundsUsed: 0,
         processed: 0,
         maxTotal: params.body.maxTotal,
+        succeeded: 0,
+        failed: 0,
+        discarded: 0,
         overallBefore,
         overallCurrent: overallBefore,
         lastMessage: "任务启动",
@@ -85,6 +94,7 @@ export async function runAutoRewriteJob(params: {
 
   let attempted = 0;
   let succeeded = 0;
+  let discarded = 0;
   let roundsUsed = 0;
   let bestScore = Number.POSITIVE_INFINITY;
   let noImproveRounds = 0;
@@ -191,6 +201,7 @@ export async function runAutoRewriteJob(params: {
             roundsUsed,
             processed: attempted,
             succeeded,
+            discarded,
             failed: failures.length,
             overallCurrent: overall,
             lastMessage: `正在筛选第 ${roundsUsed + 1} 轮候选段落…`,
@@ -253,6 +264,7 @@ export async function runAutoRewriteJob(params: {
               roundsUsed,
               processed: attempted,
               succeeded,
+              discarded,
               failed: failures.length,
               overallCurrent: overall,
               lastMessage: exhaustedReason,
@@ -334,6 +346,7 @@ export async function runAutoRewriteJob(params: {
                 roundsUsed,
                 processed: attempted,
                 succeeded,
+                discarded,
                 failed: failures.length,
                 lastMessage: `第 ${roundsUsed} 轮：并发改写第 [${idxList}] 段…`,
               },
@@ -410,11 +423,15 @@ export async function runAutoRewriteJob(params: {
           if (r.status === "fulfilled") {
             const { p, out } = r.value;
             if (out.ok) {
-              updated[p.id] = out.revisedText;
-              rewriteResults[p.id] = out.rewriteResult;
-              // 成功改写后递增该段累计改写次数（写回 session 时一并持久化）
-              rwCounts[p.id] = (rwCounts[p.id] ?? 0) + 1;
-              succeeded += 1;
+              if (shouldKeepAutoRewriteParagraph(out.rewriteResult.quality)) {
+                updated[p.id] = out.revisedText;
+                rewriteResults[p.id] = out.rewriteResult;
+                // 成功改写后递增该段累计改写次数（写回 session 时一并持久化）
+                rwCounts[p.id] = (rwCounts[p.id] ?? 0) + 1;
+                succeeded += 1;
+              } else {
+                discarded += 1;
+              }
             } else {
               failures.push({
                 paragraphId: p.id,
@@ -446,8 +463,9 @@ export async function runAutoRewriteJob(params: {
                 ...sAfter.autoRewriteJob.progress,
                 processed: attempted,
                 succeeded,
+                discarded,
                 failed: failures.length,
-                lastMessage: `第 ${roundsUsed} 轮：已完成 ${attempted} 段（成功 ${succeeded}，失败 ${failures.length}）`,
+                lastMessage: `第 ${roundsUsed} 轮：已完成 ${attempted} 段（有效 ${succeeded}，丢弃 ${discarded}，失败 ${failures.length}）`,
               },
             },
           });
@@ -481,17 +499,28 @@ export async function runAutoRewriteJob(params: {
     }
 
     clearTimeout(jobAbortTimer); // 正常完成时取消超时定时器
-    const finalReport = detectAigcRisk(mergeParagraphs(paragraphs, updated));
-    const revision = (session.revision ?? 0) + 1;
+    const afterReport = detectAigcRisk(mergeParagraphs(paragraphs, updated));
+    const finalization = finalizeAutoRewriteOutcome({
+      overallBefore,
+      overallAfter: afterReport.overallRiskScore ?? 0,
+      keptCount: succeeded,
+    });
+    const finalUpdated = finalization.rollbackApplied ? initialUpdated : updated;
+    const finalRewriteResults = finalization.rollbackApplied ? initialRewriteResults : rewriteResults;
+    const finalRwCounts = finalization.rollbackApplied ? initialRwCounts : rwCounts;
+    const finalReport = finalization.rollbackApplied
+      ? detectAigcRisk(mergeParagraphs(paragraphs, finalUpdated))
+      : afterReport;
+    const revision = finalization.rollbackApplied ? session.revision ?? 0 : (session.revision ?? 0) + 1;
     const doneAt = Date.now();
     const latestSession = params.store.get(params.sessionId);
     params.store.update(params.sessionId, {
-      revised: updated,
-      rewriteResults,
+      revised: finalUpdated,
+      rewriteResults: finalRewriteResults,
       reportAfter: finalReport,
       revision,
       // 累计改写次数持久化，下次任务启动时可读取，跳过已多次尝试的顽固段落
-      paragraphRewriteCounts: rwCounts,
+      paragraphRewriteCounts: finalRwCounts,
       revisedDocx: undefined,
       revisedDocxRevision: undefined,
       autoRewriteJob: {
@@ -505,12 +534,18 @@ export async function runAutoRewriteJob(params: {
           roundsUsed,
           processed: attempted,
           maxTotal: params.body.maxTotal,
-          succeeded,
+          succeeded: finalization.finalKeptCount,
+          discarded,
           failed: failures.length,
           overallBefore,
-          overallCurrent: finalReport.overallRiskScore ?? 0,
-          lastMessage: jobTimedOut
-            ? `已运行超 25 分钟，自动收尾（已成功改写 ${succeeded} 段）`
+          overallCurrent: finalization.finalOverallCurrent,
+          rollbackApplied: finalization.rollbackApplied,
+          rollbackReason: finalization.rollbackApplied ? "本轮全文 AI 率未下降，已自动回滚并保留原稿" : undefined,
+          keptBeforeRollback: finalization.keptBeforeRollback,
+          lastMessage: finalization.rollbackApplied
+            ? "本轮全文 AI 率未下降，已自动回滚并保留原稿"
+            : jobTimedOut
+            ? `已运行超 25 分钟，自动收尾（已有效保留 ${finalization.finalKeptCount} 段）`
             : failures.length
             ? `完成（有 ${failures.length} 段未能自动改写）`
             : "完成",
@@ -537,6 +572,7 @@ export async function runAutoRewriteJob(params: {
           processed: attempted,
           maxTotal: params.body.maxTotal,
           succeeded,
+          discarded,
           failed: failures.length,
           overallBefore,
           overallCurrent: undefined,
