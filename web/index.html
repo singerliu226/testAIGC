@@ -673,10 +673,10 @@ body.sidebar-open .action-bar{margin-right:400px}
       <div id="deltaInfo" class="hidden delta-bar"></div>
       <div id="verdictSuggestion" class="hidden" style="margin-top:14px;padding:10px 14px;border-radius:8px;font-size:13px;line-height:1.7;display:flex;align-items:flex-start;gap:8px"></div>
       <div id="platformNotice" class="hidden" style="margin-top:10px;padding:10px 14px;border-radius:8px;font-size:12px;line-height:1.8;background:#eff6ff;color:#1e40af;border-left:3px solid #3b82f6">
-        <div style="font-weight:600;margin-bottom:4px">ℹ️ 各平台AI检测结果说明</div>
-        <div>・ <strong>知网（CNKI）</strong>：当前页面展示的是“知网预测分”，用于帮助你更接近知网口径，但它仍会受样本覆盖度影响，不等于知网官方结果。</div>
-        <div>・ <strong>PaperPass / 万方</strong>：不同平台会对模板句、句长波动和困惑度使用不同权重，因此同一篇论文在各平台的分数可能不同。</div>
-        <div>・ 如果你最终以知网为准，建议把关键版本拿去知网复测一次，再把真实结果补给系统做后续校准。</div>
+        <div style="font-weight:600;margin-bottom:4px">ℹ️ 检测结果说明</div>
+        <div>・ <strong>本系统 AI率</strong>：基于规则与语言模型的综合判断，已针对中文学术论文做了专项优化，可作为主要参考。</div>
+        <div>・ <strong>知网（CNKI）</strong>：知网预测分功能正在校准中，暂时不展示，避免给你不准确的参考。如需以知网为准，请直接去知网复测，并把官方报告提交给客服用于定制修改。</div>
+        <div>・ <strong>PaperPass / 万方</strong>：不同平台对模板句、句长波动和困惑度的权重不同，因此同一篇论文在各平台的分数可能不同。</div>
       </div>
       <div style="display:flex;gap:8px;margin-top:12px;flex-wrap:wrap">
         <button class="btn btn-primary hidden" id="continueRewriteTop">
@@ -1510,8 +1510,7 @@ function render(){
   verdictBarLabel.style.color=barColor;
   const cnkiLevel=levelText(getCnkiOverallLevel(sAfter!==null?ra:rb));
   verdictSubscores.innerHTML=`
-    <div class="score-pair"><span>通用检测</span><strong>${formatScore(scoreNow)}</strong></div>
-    <div class="score-pair"><span>知网预测</span><strong>${formatScore(cnkiNow)}</strong>${cnkiNow!==null?`<span class="pill pill-${getCnkiOverallLevel(sAfter!==null?ra:rb)}" style="font-size:10px">${escapeHtml(cnkiLevel)}</span>`:""}</div>`;
+    <div class="score-pair"><span>通用检测</span><strong>${formatScore(scoreNow)}</strong></div>`;
   verdictFilename.textContent=state.session.filename||"";
 
   // ── delta info: only show if user has actually rewritten paragraphs ──
@@ -1521,7 +1520,7 @@ function render(){
     deltaInfo.classList.remove("hidden");
     deltaInfo.style.background=d<0?"var(--ok-bg)":"var(--warn-bg)";
     deltaInfo.style.color=d<0?"var(--ok)":"var(--warn)";
-    deltaInfo.innerHTML=`AI率 <strong>${Math.round(sBefore)}%</strong> → <strong>${Math.round(sAfter)}%</strong>（${d<0?"降低":"升高"} <strong>${Math.abs(Math.round(d))}%</strong>）${cnkiDelta!==null?`<br>知网预测 <strong>${Math.round(cnkiBefore)}%</strong> → <strong>${Math.round(cnkiAfter)}%</strong>（${cnkiDelta<0?"降低":"升高"} <strong>${Math.abs(Math.round(cnkiDelta))}%</strong>）`:""}`;
+    deltaInfo.innerHTML=`AI率 <strong>${Math.round(sBefore)}%</strong> → <strong>${Math.round(sAfter)}%</strong>（${d<0?"降低":"升高"} <strong>${Math.abs(Math.round(d))}%</strong>）`;
   }else deltaInfo.classList.add("hidden");
 
   // ── suggestion + continue-rewrite button ──
@@ -1664,7 +1663,6 @@ function render(){
         ${(rr.humanFeatures||[]).length?`<div class="label">注入的人类特征</div><div style="color:var(--ok)">${escapeHtml(rr.humanFeatures.join("；"))}</div>`:""}
         <div class="label">需人工确认</div><div>${escapeHtml((rr.needHumanCheck||[]).join("；"))||"-"}</div>
         ${aScore!==null?`<div class="label">复检AI率</div><div><strong>${Math.round(r.riskScore)}%</strong> → <strong style="color:${aScore<r.riskScore?"var(--ok)":"var(--err)"}"> ${Math.round(aScore)}%</strong> ${aScore>=35?'<span style="color:var(--warn);font-size:11px">（AI率仍偏高，建议手动修改）</span>':`<span style="color:var(--ok);font-size:11px">（已降至安全区间）</span>`}</div>`:""}
-        ${cnkiScore!==null?`<div class="label">知网预测</div><div><strong>${Math.round(cnkiScore)}%</strong>${afterCnkiScore!==null?` → <strong style="color:${afterCnkiScore<cnkiScore?"var(--ok)":"var(--err)"}">${Math.round(afterCnkiScore)}%</strong>`:""}</div>`:""}
       </div>`:"";
 
     tr.innerHTML=`
@@ -1673,7 +1671,6 @@ function render(){
         <div class="risk-cell">
           <span class="pill pill-${lvl}">${statusLabel}</span>
           ${aScore!==null?`<div style="margin-top:4px;font-size:11px;color:var(--g400)">${Math.round(r.riskScore)}% → ${Math.round(aScore)}%</div>`:""}
-          ${cnkiScore!==null?`<div style="margin-top:4px;font-size:11px;color:#9a3412">知网预测 ${Math.round(cnkiScore)}%${afterCnkiScore!==null?` → ${Math.round(afterCnkiScore)}%`:""}</div>`:""}
           ${delta!==null?`<div class="delta ${delta<0?"good":"bad"}">${delta<0?"":"+"} ${delta.toFixed(0)}%</div>`:""}
           ${weakDrop?`<span class="pill pill-medium" style="font-size:10px;margin-top:4px">效果不佳</span>`:""}
         </div>
@@ -2560,7 +2557,7 @@ historyBtn.addEventListener("click",async()=>{
       const ca=s.overallCnkiAfter?`${Math.round(s.overallCnkiAfter.score)}%`:(s.overallCnkiBefore?`${Math.round(s.overallCnkiBefore.score)}%（未改写）`:"—");
       const dlBtn=s.hasRevised?`<a class="btn btn-outline btn-sm" href="/api/export/${encodeURIComponent(s.sessionId)}" download style="margin-right:4px">下载</a>`:"";
       const tr=document.createElement("tr");
-      tr.innerHTML=`<td>${escapeHtml(dt)}</td><td title="${escapeHtml(s.filename||"")}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.filename||"")}</td><td style="font-family:var(--font-mono);white-space:nowrap"><div>通用：${escapeHtml(b)} → ${escapeHtml(a)}</div><div style="margin-top:2px;color:#9a3412">知网预测：${escapeHtml(cb)} → ${escapeHtml(ca)}</div></td><td style="white-space:nowrap">${dlBtn}<button class="btn btn-outline btn-sm" data-load="${escapeHtml(s.sessionId)}">恢复</button></td>`;
+      tr.innerHTML=`<td>${escapeHtml(dt)}</td><td title="${escapeHtml(s.filename||"")}" style="max-width:160px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap">${escapeHtml(s.filename||"")}</td><td style="font-family:var(--font-mono);white-space:nowrap"><div>AI率：${escapeHtml(b)} → ${escapeHtml(a)}</div></td><td style="white-space:nowrap">${dlBtn}<button class="btn btn-outline btn-sm" data-load="${escapeHtml(s.sessionId)}">恢复</button></td>`;
       historyBody.appendChild(tr);
     }
     if(!rows.length)historyBody.innerHTML=`<tr><td colspan="4" style="color:var(--g400)">暂无历史会话（会话按账号隔离，本机浏览器 localStorage 中的账号 ID 未找到对应记录）</td></tr>`;
@@ -2643,15 +2640,6 @@ function openPreview(){
           <div class="vc-value ${scoreAfter>=70?"err":scoreAfter>=35?"warn":"ok"}">${Math.round(scoreAfter)}%</div>
           <div class="vc-note">${delta<0?"↓ 降低 "+Math.abs(Math.round(delta))+"%（降幅"+dropPct+"%）":"↑ 升高 "+Math.round(delta)+"%"}</div>
         </div>
-        ${cnkiScoreBefore!==null?`<div class="verify-card">
-          <div class="vc-label">改写前知网预测</div>
-          <div class="vc-value ${cnkiScoreBefore>=70?"err":cnkiScoreBefore>=35?"warn":"ok"}">${Math.round(cnkiScoreBefore)}%</div>
-        </div>`:""}
-        ${cnkiScoreAfter!==null?`<div class="verify-card">
-          <div class="vc-label">改写后知网预测</div>
-          <div class="vc-value ${cnkiScoreAfter>=70?"err":cnkiScoreAfter>=35?"warn":"ok"}">${Math.round(cnkiScoreAfter)}%</div>
-          ${cnkiScoreBefore!==null?`<div class="vc-note">${cnkiScoreAfter<cnkiScoreBefore?"↓ 降低 ":"↑ 升高 "}${Math.abs(Math.round(cnkiScoreAfter-cnkiScoreBefore))}%</div>`:""}
-        </div>`:""}
         <div class="verify-card">
           <div class="vc-label">高AI率段落</div>
           <div class="vc-value ${highAfter===0?"ok":"err"}">${highBefore} → ${highAfter}</div>
