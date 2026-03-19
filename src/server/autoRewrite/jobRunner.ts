@@ -5,6 +5,19 @@ import type { HttpError } from "../errors.js";
 import { rewriteOneInternal, type RewriteOneInternalDeps } from "./rewriteOneInternal.js";
 import { finalizeAutoRewriteOutcome, shouldKeepAutoRewriteParagraph } from "./resultGuard.js";
 
+/**
+ * 知网结构敏感角色集合。
+ *
+ * 设计原因：
+ * - 这些段落是知网检测的核心高分区，改写后语言变了但结构骨架不变，知网分几乎不降；
+ * - 对这些段落在 auto 模式下强制使用 entropy 模式，从结构层面破坏模板感。
+ */
+const CNKI_STRUCTURAL_ROLES = new Set([
+  "chapterRoadmap",
+  "researchSignificance",
+  "literatureReview",
+]);
+
 export type AutoRewriteParams = {
   targetScore: number;
   maxRounds: number;
@@ -390,6 +403,15 @@ export async function runAutoRewriteJob(params: {
                 setTimeout(() => reject(new Error(`段落 ${p.index + 1} 改写超时（>${SEGMENT_TIMEOUT_MS / 1000}s），已跳过`)), SEGMENT_TIMEOUT_MS)
               );
 
+              /**
+               * 对知网结构段（章节安排/研究意义/文献综述）强制使用 entropy 改写模式。
+               * 检测依据：候选段落的 roleTags 是否包含结构敏感角色。
+               * 这些段落的骨架模板是知网高分的根本原因，普通改写不足以降分。
+               */
+              const forceEntropyStart = (c.roleTags ?? []).some((tag) =>
+                CNKI_STRUCTURAL_ROLES.has(tag)
+              );
+
               const out = await Promise.race([
                 rewriteOneInternal({
                   deps: params.deps,
@@ -406,6 +428,7 @@ export async function runAutoRewriteJob(params: {
                   signals: (c.signals ?? []) as any,
                   riskBefore: c.riskScore,
                   allowFactRisk: params.body.allowFactRisk,
+                  forceEntropyStart,
                   signal: jobAbortController.signal,
                 }),
                 segmentTimeout,

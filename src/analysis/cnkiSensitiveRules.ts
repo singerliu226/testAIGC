@@ -123,5 +123,109 @@ export function buildCnkiSensitiveSignals(
     });
   }
 
+
+  // ──────────────────────────────────────────────────────────────────────────
+  // 以下 5 条为知网高频触发盲区补充，覆盖原有 7 条未涉及的场景
+  // ──────────────────────────────────────────────────────────────────────────
+
+  /**
+   * 引言套话：知网对"随着X的发展/在X背景下"等开篇套话高度敏感。
+   * 这类表达是 AI 生成引言的最高频模式，知网已专项建库。
+   * 触发条件不限制角色，任意段落命中均计入。
+   */
+  const introFormulaCount = countMatches(
+    text,
+    /(随着.{0,20}(深入|快速|迅速|广泛)?(发展|推进|普及|兴起)|在.{0,20}(背景下|形势下|环境下|语境下)|近年来.{0,10}(受到|引起|得到|引发)|具有重要的(研究|参考|现实|实践|理论)(意义|价值))/
+  );
+  if (introFormulaCount >= 1) {
+    signals.push({
+      signalId: "cnki_intro_formula",
+      category: "cnkiSensitive",
+      title: "包含知网高敏引言套话",
+      evidence: [`命中"随着…发展/在…背景下/近年来/具有重要意义"等引言套话 ${introFormulaCount} 处`],
+      suggestion: "删除段首套话，直接从核心问题或关键发现切入，避免\"背景→意义\"的 AI 式铺垫。",
+      score: 17,
+    });
+  }
+
+  /**
+   * 结论套话：知网对论文结尾模板尤为敏感。
+   * "综上所述/通过本文研究/本文得出以下结论"是知网已建库的高频模板短语。
+   * 触发条件不限制角色，任意段落命中均计入。
+   */
+  const conclusionFormulaCount = countMatches(
+    text,
+    /(综上所述|通过本(文|研究|论文)(的)?(研究|分析|探讨)|本(文|研究|论文)(得出|发现|表明|认为|的结论|旨在说明)|研究结果(表明|显示|证明)|本文(的|)研究(结论|发现|结果))/
+  );
+  if (conclusionFormulaCount >= 1) {
+    signals.push({
+      signalId: "cnki_conclusion_boilerplate",
+      category: "cnkiSensitive",
+      title: "包含知网高敏结论套话",
+      evidence: [`命中"综上所述/通过本文研究/本文得出"等结论套话 ${conclusionFormulaCount} 处`],
+      suggestion: "删除模板式总结开头，直接呈现核心发现，并说明其对理论或实践的具体贡献。",
+      score: 16,
+    });
+  }
+
+  /**
+   * 三段式并列结构：知网将"一是…二是…三是…"或"首先/其次/再次"连续 3 组以上识别为 AI 模板结构。
+   * 这类结构高度机械化，是中文 AI 写作的典型标志。
+   */
+  const parallelOneTwo = countMatches(text, /(一是|二是|三是|四是|五是)/);
+  const parallelFirstSecond = countMatches(text, /(首先|其次|再次|最后)/);
+  const parallelHit = parallelOneTwo >= 3 || parallelFirstSecond >= 3;
+  if (parallelHit) {
+    signals.push({
+      signalId: "cnki_parallel_structure",
+      category: "cnkiSensitive",
+      title: "连续并列三要素以上的 AI 模板结构",
+      evidence: [
+        parallelOneTwo >= 3 ? `"一是/二是/三是"等并列出现 ${parallelOneTwo} 处` : "",
+        parallelFirstSecond >= 3 ? `"首先/其次/再次/最后"连续出现 ${parallelFirstSecond} 处` : "",
+      ].filter(Boolean),
+      suggestion: "改用论证关系（因果/对比/递进）代替机械并列，把各要素之间的逻辑联系说清楚。",
+      score: 15,
+    });
+  }
+
+  /**
+   * 模糊限定链：知网对连续模糊限定语（"可能/一定程度上/有待进一步"）高度敏感。
+   * AI 为了"显得严谨"而堆砌模糊限定，是其写作的典型特征。
+   */
+  const hedgeCount = countMatches(
+    text,
+    /(可能|或许|也许|在一定(程度上|范围内)|在某种(程度上|意义上)|有待(进一步|深入)|尚需(进一步|深入)|仍需(进一步|深入))/
+  );
+  if (hedgeCount >= 3) {
+    signals.push({
+      signalId: "cnki_hedge_chain",
+      category: "cnkiSensitive",
+      title: "连续模糊限定语堆叠",
+      evidence: [`"可能/在一定程度上/有待进一步"等模糊限定语出现 ${hedgeCount} 处`],
+      suggestion: "减少空洞的不确定性表述，改为说明具体的边界条件或约束来源。",
+      score: 12,
+    });
+  }
+
+  /**
+   * 高抽象名词密度：知网对"层面/维度/路径/机制/框架"等高频抽象名词密集堆叠极为敏感。
+   * 实现：计算每百字命中数，密度过高且无具体数字/引用时触发。
+   * 不限制角色，任意段落均可触发。
+   */
+  const abstractCount = countMatches(text, /(层面|维度|路径|机制|模式|框架|体系|格局|逻辑|生态)/);
+  const hasConcrete = /\d+(\.\d+)?(%|个|项|名|万|亿|次|篇|年|月|日)/.test(text) || /【[^\]]+】|\[[^\]]+\]/.test(text);
+  const abstractDensity = text.length > 0 ? (abstractCount / text.length) * 100 : 0;
+  if (abstractCount >= 4 && abstractDensity > 1.5 && !hasConcrete) {
+    signals.push({
+      signalId: "cnki_abstract_dense",
+      category: "cnkiSensitive",
+      title: "高抽象名词密度且缺乏具体数据支撑",
+      evidence: [`"层面/维度/路径/机制/框架"等抽象名词出现 ${abstractCount} 处，密度 ${abstractDensity.toFixed(1)}/百字，且无具体数字/引用`],
+      suggestion: "把抽象表述落地：指明是哪个具体的层面/路径/机制，或用具体数据/案例/引用替换。",
+      score: 13,
+    });
+  }
+
   return signals;
 }

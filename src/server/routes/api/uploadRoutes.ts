@@ -24,7 +24,7 @@ import {
 import { textToDocx } from "../../../docx/textToDocx.js";
 import { detectAigcRisk, detectAigcRiskAsync } from "../../../analysis/detector.js";
 import { createDashscopeClient, loadDashscopeConfigFromEnv } from "../../../llm/client.js";
-import { judgeParagraphWithDashscope } from "../../../llm/judge.js";
+import { judgeParagraphCnkiStyle } from "../../../llm/judge.js";
 import { asyncHandler } from "../asyncHandler.js";
 import { uploadLimiter } from "../../rateLimit.js";
 import { HttpError } from "../../errors.js";
@@ -98,9 +98,17 @@ function startBackgroundCnkiJudgeReview(params: {
         candidateCount: candidatesForJudge.length,
       });
 
+      /**
+       * 使用知网口径专项 prompt 进行复核。
+       *
+       * 设计原因：
+       * - 旧版调用 judgeParagraphWithDashscope，其 prompt 站在通用 AIGC 检测视角；
+       * - 中文论文复核需要知网视角（模板感/句长均匀度优先），切换到 judgeParagraphCnkiStyle
+       *   使 LLM 复核结果能更好地与知网实测分对齐，收窄系统与知网评分的差距。
+       */
       const judgeResults = await Promise.allSettled(
         candidatesForJudge.map((report) =>
-          judgeParagraphWithDashscope({
+          judgeParagraphCnkiStyle({
             logger: params.logger,
             paragraphText: report.text,
             signals: report.signals,

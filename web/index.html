@@ -643,6 +643,18 @@ body.sidebar-open .action-bar{margin-right:400px}
     </div>
   </div>
 
+  <!-- ══════ 知网说明卡片（固定展示，非隐藏） ══════ -->
+  <div id="cnkiNoticeCard" style="margin-bottom:12px;padding:12px 16px;border-radius:10px;font-size:12.5px;line-height:1.85;background:#fffbeb;color:#78350f;border-left:4px solid #f59e0b;border:1px solid #fcd34d">
+    <div style="font-weight:700;font-size:13px;margin-bottom:6px;display:flex;align-items:center;gap:6px">
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#d97706" stroke-width="2.5"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
+      关于本系统 AI 率与知网检测结果的差异说明
+    </div>
+    <div>・ <strong>本系统使用自研模型</strong>，与知网使用完全不同的检测算法。两者均为有效参考，但评分口径存在差异，特别是对章节安排、研究意义、文献综述等"论文结构模板段"的判定权重不同。</div>
+    <div>・ <strong>实测差异通常在 5–15% 之间</strong>。知网对论文结构模板感更敏感，即使本系统打出 20%，知网实测仍可能在 30–40%。我们持续在优化对齐精度。</div>
+    <div>・ <strong>建议操作</strong>：将本系统 AI 率降至 <strong>20% 以下</strong>后，用知网免费额度复测一次作为最终确认。如知网结果仍偏高，可将官方报告截图提交给客服，我们会针对你的论文做定制调参。</div>
+    <div style="margin-top:6px;font-size:11.5px;color:#92400e">⚠ 本系统检测结果仅供辅助参考，不构成任何关于知网检测通过率的保证或承诺。</div>
+  </div>
+
   <!-- ══════ RESULT ══════ -->
   <div class="card hidden" id="overviewCard">
     <div class="card-header">

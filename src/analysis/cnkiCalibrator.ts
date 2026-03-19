@@ -9,28 +9,43 @@ export type CnkiParagraphScoreInput = {
   text: string;
 };
 
+
+/**
+ * 角色加分参数（基于真实样本重拟合）。
+ *
+ * 原始值来自经验估计；2026-03-19 基于用户真实样本（raw=37%，知网实测=51%）
+ * 发现系统整体低估约 14%，主要原因是结构模板段（chapterRoadmap/literatureReview/
+ * researchSignificance）的加分严重不足。本次将核心结构段加分提升 50-75%，
+ * 同时适度提升其余角色，使整体预测分向上校准。
+ */
 const ROLE_BONUS: Partial<Record<CnkiRoleTag, number>> = {
-  chapterRoadmap: 10,
-  literatureReview: 8,
-  researchSignificance: 8,
-  researchMethod: 6,
-  theoreticalFramework: 6,
-  limitations: 5,
-  futureWork: 5,
-  conclusionSummary: 4,
-  researchPurpose: 4,
-  researchBackground: 3,
+  chapterRoadmap: 14,       // 原 10，章节安排段是知网最高分来源之一
+  literatureReview: 12,     // 原 8，文献综述是知网第二高分来源
+  researchSignificance: 12, // 原 8，研究意义模板句密度极高
+  researchMethod: 9,        // 原 6
+  theoreticalFramework: 9,  // 原 6
+  limitations: 7,           // 原 5
+  futureWork: 7,            // 原 5
+  conclusionSummary: 6,     // 原 4
+  researchPurpose: 6,       // 原 4
+  researchBackground: 4,    // 原 3
 };
 
+/**
+ * 角色乘数参数（基于真实样本重拟合）。
+ *
+ * 知网对结构模板段的敏感度远超通用检测，chapterRoadmap 即使原始分不高
+ * 也会被知网放大。乘数从 1.35 提升到 1.55，literatureReview 从 1.25->1.40。
+ */
 const ROLE_MULTIPLIER: Partial<Record<CnkiRoleTag, number>> = {
-  chapterRoadmap: 1.35,
-  literatureReview: 1.25,
-  researchSignificance: 1.2,
-  researchMethod: 1.15,
-  limitations: 1.15,
-  futureWork: 1.15,
-  theoreticalFramework: 1.1,
-  conclusionSummary: 1.1,
+  chapterRoadmap: 1.55,     // 原 1.35
+  literatureReview: 1.40,   // 原 1.25
+  researchSignificance: 1.32, // 原 1.20
+  researchMethod: 1.22,     // 原 1.15
+  limitations: 1.22,        // 原 1.15
+  futureWork: 1.22,         // 原 1.15
+  theoreticalFramework: 1.16, // 原 1.10
+  conclusionSummary: 1.14,  // 原 1.10
 };
 
 const VALID_ROLE_TAGS = new Set<CnkiRoleTag>([
@@ -69,7 +84,7 @@ function normalizeRoleTags(roleTags: string[]): CnkiRoleTag[] {
 export function computeCnkiParagraphScore(input: CnkiParagraphScoreInput): number {
   const sensitiveSignals = input.signals.filter((s) => s.category === "cnkiSensitive");
   const roleBonus = input.roleTags.reduce((sum, role) => sum + (ROLE_BONUS[role] ?? 0), 0);
-  const signalBonus = sensitiveSignals.reduce((sum, signal) => sum + signal.score, 0) * 0.45;
+  const signalBonus = sensitiveSignals.reduce((sum, signal) => sum + signal.score, 0) * 0.65; // 原 0.45，基于真实样本重拟合
   const multiplier = paragraphRoleMultiplier(input.roleTags);
 
   const adjusted = Math.round(input.rawRiskScore * multiplier + roleBonus + signalBonus);
@@ -146,9 +161,10 @@ export function computeCnkiOverallScore(
   }
 
   let score = weightedTotal > 0 ? Math.round((weightedAi / weightedTotal) * 100) : 0;
-  if (sensitiveRoleCount >= 4) score += 3;
-  if (roadmapCount >= 1) score += 2;
-  if (litReviewCount >= 2) score += 2;
+  // 文档级附加分（基于真实样本重拟合，从 +3/+2/+2 提升到 +5/+3/+3）
+  if (sensitiveRoleCount >= 4) score += 5;
+  if (roadmapCount >= 1) score += 3;
+  if (litReviewCount >= 2) score += 3;
 
   return clamp(score, 0, 100);
 }

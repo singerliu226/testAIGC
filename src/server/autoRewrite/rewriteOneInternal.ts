@@ -45,6 +45,15 @@ export async function rewriteOneInternal(params: {
   signals: FindingSignal[];
   riskBefore: number;
   allowFactRisk?: boolean;
+  /**
+   * 对知网高敏结构段（chapterRoadmap/researchSignificance/literatureReview）强制从 entropy 模式开始。
+   *
+   * 设计原因：
+   * - 这类段落改写后语言风格变了，但段落骨架（roadmap/意义/综述结构）不变，知网依然高分；
+   * - 从 entropy 模式出发，要求极端句长分布和非线性论证顺序，从结构层面破坏模板感；
+   * - 普通段落使用 normal/aggressive 即可，此参数只作用于结构段。
+   */
+  forceEntropyStart?: boolean;
   /** Job 级 AbortSignal，abort() 后立即终止所有 in-flight LLM HTTP 请求 */
   signal?: AbortSignal;
 }): Promise<RewriteOneInternalResult> {
@@ -135,7 +144,7 @@ export async function rewriteOneInternal(params: {
      * 自动降分的高风险段落（>=70）更需要"结构级重写"，否则容易出现"改了但分不动"。
      * 因此：auto + high risk 默认直接走 aggressive + factLock（风险模式除外）。
      */
-    const startAggressive = params.type === "auto" && params.riskBefore >= 70 && !params.allowFactRisk;
+    const startAggressive = params.type === "auto" && params.riskBefore >= 70 && !params.allowFactRisk && !params.forceEntropyStart;
 
     /**
      * 自动模式下 attempt1 始终启用 factLock（allowFactRisk 时由用户承担事实风险故跳过）。
@@ -148,13 +157,24 @@ export async function rewriteOneInternal(params: {
      *   启用 factLock 后预期 attempt1 通过率显著提升，减少超时和重试消耗。
      */
     const autoFactLock = params.type === "auto" && !params.allowFactRisk;
+
+    /**
+     * 知网结构段从 entropy 模式出发：attempt1 直接使用 entropy，而非 normal/aggressive。
+     *
+     * 设计原因：
+     * - chapterRoadmap/researchSignificance/literatureReview 这类段落的骨架结构是知网高分的根本原因；
+     * - 普通改写只改语言风格，骨架不变，知网分几乎不降；
+     * - entropy 模式要求极端句长分布 + 非线性论证顺序，从结构层面破坏模板感；
+     * - 对这些特定角色段，从 attempt1 就走 entropy，可以最大化第一次改写的降分效果。
+     */
+    const startMode = params.forceEntropyStart ? "entropy" : (startAggressive ? "aggressive" : "normal");
     const attempt1 = await rewriteParagraphWithDashscope({
       logger: params.logger,
       paragraphText: params.baseText,
       contextBefore: params.contextBefore,
       contextAfter: params.contextAfter,
       signals: params.signals,
-      rewriteMode: startAggressive ? "aggressive" : "normal",
+      rewriteMode: startMode,
       minChangeRatio: startAggressive ? 0.35 : undefined,
       factLock: autoFactLock,
       signal: params.signal,

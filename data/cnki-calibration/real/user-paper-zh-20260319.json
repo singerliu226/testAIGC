@@ -1,0 +1,17 @@
+{
+  "documentId": "user-paper-zh-20260319",
+  "title": "用户真实中文论文（2026-03-19 提供）",
+  "language": "zh",
+  "documentType": "chinese-academic-thesis",
+  "rawLocalScore": 37,
+  "predictedCnkiScore": 37,
+  "actualCnkiScore": 51,
+  "predictedHighRiskParagraphIds": [],
+  "actualHighRiskParagraphIds": [],
+  "roleTagsHit": [],
+  "evidence": {
+    "actualScoreSource": "用户 2026-03-19 提交，知网检测官方结果 51%；本系统显示 37%；差距 14%",
+    "actualParagraphSource": "暂无段落级知网标注，待用户补充具体高风险段落截图"
+  },
+  "notes": "第一条真实中文校准样本。本样本用于：(1) 确认系统存在系统性低估 ~14%；(2) 指导 cnkiCalibrator 参数上调方向。predictedCnkiScore 使用旧版参数的近似值（与 rawLocalScore 相近，因旧版 CNKI 预测分已隐藏）。后续若能获取段落级知网报告，应补充 actualHighRiskParagraphIds 字段以启用 F1 评估。"
+}
