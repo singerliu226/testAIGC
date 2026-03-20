@@ -108,7 +108,12 @@ export class RedeemCodeStore {
       const usedTime = entry.usedAt
         ? new Date(entry.usedAt).toLocaleString("zh-CN")
         : "未知时间";
-      const err = new Error(`此兑换码已于 ${usedTime} 被使用`);
+      // 如果使用者是同一账号，给出更友好的提示（可能是重复点击）
+      const isSelf = entry.usedBy === accountId;
+      const msg = isSelf
+        ? `此兑换码已由您于 ${usedTime} 兑换过，积分已到账，请刷新页面查看余额`
+        : `此兑换码已于 ${usedTime} 被使用，如有疑问请联系客服`;
+      const err = new Error(msg);
       (err as NodeJS.ErrnoException).code = "CODE_ALREADY_USED";
       throw err;
     }
@@ -124,6 +129,20 @@ export class RedeemCodeStore {
   /** 列出所有兑换码（供管理员查看） */
   listAll(): RedeemCode[] {
     return [...this.state.codes].sort((a, b) => b.createdAt - a.createdAt);
+  }
+
+  /**
+   * 回滚兑换码状态：将已核销的码重置为未使用。
+   * 仅在 ledger.topup() 异常时调用，防止"码被核销但积分未到账"的不一致。
+   */
+  rollback(code: string): void {
+    const normalized = code.trim().toUpperCase();
+    const entry = this.state.codes.find((c) => c.code === normalized);
+    if (!entry || !entry.used) return; // 已经是未使用状态，无需回滚
+    entry.used = false;
+    entry.usedAt = undefined;
+    entry.usedBy = undefined;
+    this.persist();
   }
 
   /** 统计：已用/未用数量 */

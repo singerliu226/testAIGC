@@ -89,12 +89,27 @@ export function registerBaseRoutes(params: { router: Router; logger: AppLogger }
       // 核销兑换码（失败时抛出具体错误信息）
       const result = redeemStore.redeem(body.code, accountId);
 
-      // 成功后给账号充值对应积分
-      const tx = ledger.topup(accountId, result.points, {
-        source: "redeem",
-        code: body.code,
-        packageName: result.packageName,
-      });
+      /**
+       * 原子性保障：核销码（redeemStore.redeem）和充值（ledger.topup）是两步操作。
+       * 若 topup 异常，执行回滚：将码重置为未使用状态，确保用户可重试。
+       */
+      let tx;
+      try {
+        tx = ledger.topup(accountId, result.points, {
+          source: "redeem",
+          code: body.code,
+          packageName: result.packageName,
+        });
+      } catch (topupErr) {
+        // topup 失败时回滚兑换码状态，防止"码被核销但积分未到账"
+        redeemStore.rollback(body.code);
+        params.logger.error("兑换码充值失败，已回滚", {
+          accountId,
+          code: body.code,
+          error: topupErr instanceof Error ? topupErr.message : String(topupErr),
+        });
+        throw topupErr;
+      }
 
       params.logger.info("兑换码核销成功", { accountId, code: body.code, points: result.points });
 

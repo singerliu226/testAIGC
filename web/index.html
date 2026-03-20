@@ -392,6 +392,27 @@ body.sidebar-open .action-bar{margin-right:400px}
 .chat-input-area textarea:focus{border-color:var(--pri)}
 .chat-send-btn{width:38px;height:38px;border-radius:8px;border:none;background:var(--pri);color:white;cursor:pointer;display:flex;align-items:center;justify-content:center;flex-shrink:0;transition:.15s}
 .chat-send-btn:hover{background:var(--pri-h)}
+/* 段落导航栏：显示所有高风险段落，方便逐段修改 */
+.chat-nav-bar{padding:6px 16px 6px;border-bottom:1px solid var(--g100);flex-shrink:0;overflow-x:auto;display:flex;gap:6px;scrollbar-width:none;align-items:center}
+.chat-nav-bar:empty,.chat-nav-bar[hidden]{display:none}
+.chat-nav-bar::-webkit-scrollbar{display:none}
+.chat-nav-label{flex-shrink:0;font-size:10px;color:var(--g400);margin-right:4px;white-space:nowrap}
+.chat-nav-item{flex-shrink:0;display:inline-flex;align-items:center;gap:3px;padding:3px 8px;border-radius:12px;font-size:11px;cursor:pointer;border:1px solid var(--g200);background:white;color:var(--g600);white-space:nowrap;transition:.15s;line-height:1.4}
+.chat-nav-item:hover{border-color:var(--pri);color:var(--pri)}
+.chat-nav-item.active{border-color:var(--pri);background:var(--pri-l);color:var(--pri);font-weight:600}
+.chat-nav-item.revised{border-color:var(--ok);color:var(--ok);background:#f0fdf4}
+.chat-nav-item.revised.active{border-color:var(--ok);background:#dcfce7;color:#166534}
+/* 应用改写后底部操作提示条 */
+.chat-next-bar{display:flex;align-items:center;justify-content:space-between;gap:8px;padding:10px 14px;background:#f0fdf4;border:1px solid #86efac;border-radius:8px;font-size:12px;color:#166534;margin-top:8px}
+.chat-next-bar-text{flex:1}
+.chat-next-btn{flex-shrink:0;display:inline-flex;align-items:center;gap:4px;padding:5px 12px;border-radius:6px;font-size:11px;font-weight:600;cursor:pointer;border:none;background:var(--pri);color:white;transition:.15s}
+.chat-next-btn:hover{background:var(--pri-h)}
+/* 侧栏底部下载按钮 */
+.chat-dl-bar{padding:8px 16px;border-top:1px solid var(--g100);flex-shrink:0;display:flex;gap:8px;align-items:center;background:white}
+.chat-dl-bar[hidden]{display:none}
+.chat-dl-btn{flex:1;display:flex;align-items:center;justify-content:center;gap:6px;padding:8px;border-radius:8px;font-size:12px;font-weight:600;cursor:pointer;border:1px solid var(--pri);background:var(--pri-l);color:var(--pri);text-decoration:none;transition:.15s}
+.chat-dl-btn:hover{background:var(--pri);color:white}
+.chat-progress-tag{font-size:11px;color:var(--g400);white-space:nowrap;flex-shrink:0}
 .chat-send-btn:disabled{opacity:.4;cursor:not-allowed}
 .chat-typing{align-self:flex-start;padding:8px 14px;background:var(--g100);border-radius:12px;border-bottom-left-radius:4px;font-size:12px;color:var(--g400)}
 @keyframes dotPulse{0%,80%,100%{opacity:.3}40%{opacity:1}}
@@ -1018,8 +1039,13 @@ body.sidebar-open .action-bar{margin-right:400px}
       <span>帮我改</span>
       <span id="chatParaLabel" class="pill pill-medium" style="font-size:10px">#-</span>
     </div>
-    <button class="icon-btn" id="chatClose" title="关闭">&times;</button>
+    <div style="display:flex;align-items:center;gap:6px;flex-shrink:0">
+      <span id="chatProgressTag" style="font-size:10px;color:var(--g400)"></span>
+      <button class="icon-btn" id="chatClose" title="关闭">&times;</button>
+    </div>
   </div>
+  <!-- 段落导航栏：列出所有高风险段落，点击切换，已改段落显示 ✓ -->
+  <div class="chat-nav-bar" id="chatNavBar" hidden></div>
   <div class="chat-para-preview" id="chatParaPreview">选择一个段落开始对话改写…</div>
   <div class="chat-suggestions" id="chatSuggestions"></div>
   <div class="chat-messages" id="chatMessages">
@@ -1031,6 +1057,14 @@ body.sidebar-open .action-bar{margin-right:400px}
       <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 2L11 13M22 2l-7 20-4-9-9-4 20-7z"/></svg>
     </button>
   </div>
+  <!-- 累计改写下载栏：有改写记录时显示 -->
+  <div class="chat-dl-bar" id="chatDlBar" hidden>
+    <a class="chat-dl-btn" id="chatDlBtn" href="#" download>
+      <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg>
+      下载累计改写版本
+    </a>
+    <span class="chat-progress-tag" id="chatDlProgress"></span>
+  </div>
 </aside>
 
 <script>
@@ -1040,7 +1074,7 @@ const rwConfirmModal=$("rwConfirmModal"),rwConfirmStats=$("rwConfirmStats"),rwCo
 const rwFailModal=$("rwFailModal"),rwFailContent=$("rwFailContent"),rwFailManualBtn=$("rwFailManual"),rwFailRiskBtn=$("rwFailRisk"),rwFailCloseBtn=$("rwFailClose");
 const verdictIcon=$("verdictIcon"),verdictTitle=$("verdictTitle"),verdictDesc=$("verdictDesc"),verdictBarFill=$("verdictBarFill"),verdictBarLabel=$("verdictBarLabel"),verdictSubscores=$("verdictSubscores"),verdictFilename=$("verdictFilename"),emptyState=$("emptyState"),verdictSuggestion=$("verdictSuggestion"),continueRewriteTop=$("continueRewriteTop"),platformNotice=$("platformNotice");
 const tabFilter=$("tabFilter"),countAll=$("countAll"),countMedium=$("countMedium"),countHigh=$("countHigh");
-const chatSidebar=$("chatSidebar"),chatCloseBtn=$("chatClose"),chatParaLabel=$("chatParaLabel"),chatParaPreview=$("chatParaPreview"),chatSuggestionsEl=$("chatSuggestions"),chatMessagesEl=$("chatMessages"),chatInput=$("chatInput"),chatSendBtn=$("chatSend");
+const chatSidebar=$("chatSidebar"),chatCloseBtn=$("chatClose"),chatParaLabel=$("chatParaLabel"),chatParaPreview=$("chatParaPreview"),chatSuggestionsEl=$("chatSuggestions"),chatMessagesEl=$("chatMessages"),chatInput=$("chatInput"),chatSendBtn=$("chatSend"),chatNavBar=$("chatNavBar"),chatProgressTag=$("chatProgressTag"),chatDlBar=$("chatDlBar"),chatDlBtn=$("chatDlBtn"),chatDlProgress=$("chatDlProgress");
 const actionBarToggleBtn=$("actionBarToggle"),actionBarToggleIcon=$("actionBarToggleIcon"),actionBarToggleLabel=$("actionBarToggleLabel");
 const methodGuide=$("methodGuide"),methodGuideDismiss=$("methodGuideDismiss"),loadingTipsEl=$("loadingTips");
 let activeFilter="medium";
@@ -2728,6 +2762,75 @@ document.addEventListener("click",e=>{
 
 // ══════ CHAT SIDEBAR LOGIC ══════
 
+/**
+ * 渲染段落导航栏：列出所有中/高风险段落（AI率 >= 40%），
+ * 当前段落高亮，已有 revised 记录的段落显示 ✓，方便用户逐段跳转改写。
+ */
+function renderChatNavBar(){
+  if(!state.session){chatNavBar.hidden=true;return;}
+  const rb=state.session.reportBefore;
+  if(!rb){chatNavBar.hidden=true;return;}
+  const revised=state.session.revised||{};
+  // 取所有中/高风险段落，按原始顺序排列
+  const candidates=(rb.paragraphReports||[])
+    .filter(r=>r.riskScore>=40)
+    .sort((a,b)=>{
+      const ai=(state.session.paragraphs||[]).find(x=>x.id===a.paragraphId)?.index??0;
+      const bi=(state.session.paragraphs||[]).find(x=>x.id===b.paragraphId)?.index??0;
+      return ai-bi;
+    });
+  if(!candidates.length){chatNavBar.hidden=true;return;}
+  chatNavBar.hidden=false;
+  const revisedCount=candidates.filter(r=>!!revised[r.paragraphId]).length;
+  // 更新头部进度标签
+  chatProgressTag.textContent=revisedCount>0?`${revisedCount}/${candidates.length} 段已改`:"";
+  // 更新下载栏可见性
+  const totalRevised=Object.keys(revised).length;
+  if(totalRevised>0){
+    chatDlBar.hidden=false;
+    chatDlBtn.href=`/api/export/${encodeURIComponent(state.sessionId)}`;
+    chatDlProgress.textContent=`已改 ${totalRevised} 段`;
+  }else{
+    chatDlBar.hidden=true;
+  }
+  chatNavBar.innerHTML=`<span class="chat-nav-label">快速跳转：</span>`+candidates.map(r=>{
+    const p=(state.session.paragraphs||[]).find(x=>x.id===r.paragraphId);
+    const idx=p?p.index+1:"-";
+    const score=Math.round(r.riskScore);
+    const isRevised=!!revised[r.paragraphId];
+    const isActive=r.paragraphId===state.chatParagraphId;
+    const cls=["chat-nav-item",isActive?"active":"",isRevised?"revised":""].filter(Boolean).join(" ");
+    const label=isRevised?`✓ 第${idx}段`:`第${idx}段 ${score}%`;
+    return `<button class="${cls}" data-nav-para="${escapeHtml(r.paragraphId)}">${escapeHtml(label)}</button>`;
+  }).join("");
+}
+
+/**
+ * 跳转到下一个未改写的高风险段落。
+ * @returns true 表示成功跳转，false 表示已无待改段落
+ */
+function goNextChatParagraph(){
+  if(!state.session||!state.session.reportBefore)return false;
+  const revised=state.session.revised||{};
+  const rb=state.session.reportBefore;
+  const sorted=(rb.paragraphReports||[])
+    .filter(r=>r.riskScore>=40)
+    .sort((a,b)=>{
+      const ai=(state.session.paragraphs||[]).find(x=>x.id===a.paragraphId)?.index??0;
+      const bi=(state.session.paragraphs||[]).find(x=>x.id===b.paragraphId)?.index??0;
+      return ai-bi;
+    });
+  // 找当前段落之后的第一个未改写段落
+  const curIdx=sorted.findIndex(r=>r.paragraphId===state.chatParagraphId);
+  const remaining=curIdx>=0?sorted.slice(curIdx+1):sorted;
+  const next=remaining.find(r=>!revised[r.paragraphId]);
+  if(next){openChat(next.paragraphId);return true;}
+  // 若后面没有了，从头找
+  const fromStart=sorted.find(r=>!revised[r.paragraphId]&&r.paragraphId!==state.chatParagraphId);
+  if(fromStart){openChat(fromStart.paragraphId);return true;}
+  return false;
+}
+
 function openChat(paragraphId){
   if(!state.sessionId||!state.session)return;
   const p=(state.session.paragraphs||[]).find(x=>x.id===paragraphId);
@@ -2767,12 +2870,18 @@ function openChat(paragraphId){
     chatSuggestionsEl.innerHTML="";
   }
 
+  renderChatNavBar();
   renderChatMessages();
   chatSidebar.classList.add("open");
   document.body.classList.add("sidebar-open");
   chatInput.value="";
   chatSendBtn.disabled=false;
   chatInput.focus();
+  // 将当前段落导航项滚动到可见区域
+  setTimeout(()=>{
+    const activeNav=chatNavBar.querySelector(".chat-nav-item.active");
+    if(activeNav)activeNav.scrollIntoView({block:"nearest",inline:"center"});
+  },50);
 }
 
 function closeChat(){
@@ -2952,8 +3061,8 @@ async function applyChatRewrite(messageId){
     state.session=sess;
     syncExportButtons(json.exportUrl||_exportHref,true);
     render();
+    renderChatNavBar(); // 刷新导航栏（当前段标记为已改）
     renderChatMessages();
-    showToast("已替换原文，AI率已重新计算","ok",3000);
     if(state.chatParagraphId){
       const p=(state.session.paragraphs||[]).find(x=>x.id===state.chatParagraphId);
       if(p){
@@ -2961,11 +3070,37 @@ async function applyChatRewrite(messageId){
         chatParaPreview.textContent=currentText.length>200?currentText.slice(0,200)+"…":currentText;
       }
     }
+    // 在消息列表末尾插入"下一段"提示条，告知用户可继续改写其他段落
+    const revised=state.session.revised||{};
+    const rb=state.session.reportBefore;
+    const remaining=rb?(rb.paragraphReports||[]).filter(r=>r.riskScore>=40&&!revised[r.paragraphId]).length:0;
+    const totalRevised=Object.keys(revised).length;
+    const exportHref=json.exportUrl||_exportHref;
+    const nextBar=document.createElement("div");
+    nextBar.className="chat-next-bar";
+    if(remaining>0){
+      nextBar.innerHTML=`<span class="chat-next-bar-text">✓ 已替换 | 还有 <strong>${remaining}</strong> 段高风险段落待修改</span><button class="chat-next-btn" id="chatNextBtn"><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.5"><path d="M5 12h14M12 5l7 7-7 7"/></svg> 改下一段</button>`;
+    }else{
+      nextBar.innerHTML=`<span class="chat-next-bar-text">🎉 所有高风险段落已改写！共 <strong>${totalRevised}</strong> 段</span><a class="chat-next-btn" href="${escapeHtml(exportHref)}" download><svg width="12" height="12" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M21 15v4a2 2 0 01-2 2H5a2 2 0 01-2-2v-4M7 10l5 5 5-5M12 15V3"/></svg> 下载</a>`;
+    }
+    chatMessagesEl.appendChild(nextBar);
+    chatMessagesEl.scrollTop=chatMessagesEl.scrollHeight;
+    const nextBtn=nextBar.querySelector("#chatNextBtn");
+    if(nextBtn)nextBtn.addEventListener("click",()=>{
+      nextBar.remove();
+      if(!goNextChatParagraph())showToast("已无更多高风险段落","ok",2000);
+    });
+    showToast("已替换原文，AI率已重新计算","ok",2500);
   }catch(e){showToast("网络错误："+String(e),"err",5000)}
 }
 
 chatCloseBtn.addEventListener("click",closeChat);
 chatSendBtn.addEventListener("click",sendChatMessage);
+// 段落导航栏点击：切换当前改写段落
+chatNavBar.addEventListener("click",e=>{
+  const btn=e.target.closest("[data-nav-para]");
+  if(btn&&btn.dataset.navPara)openChat(btn.dataset.navPara);
+});
 chatInput.addEventListener("keydown",e=>{
   if(e.key==="Enter"&&!e.shiftKey){e.preventDefault();sendChatMessage()}
 });

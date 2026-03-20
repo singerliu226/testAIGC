@@ -105,6 +105,24 @@ export function registerChatRoutes(params: { router: Router; logger: AppLogger; 
         }
       };
 
+      /**
+       * 防止"刷新丢积分"：客户端断开 SSE 连接（刷新/关闭标签页）时，
+       * 若 LLM 尚未完成，立即退还预扣积分。
+       * 注意：仅当 LLM 还在运行时才退款；若 LLM 已完成则结算已完成，无需退款。
+       */
+      let llmCompleted = false;
+      req.on("close", () => {
+        if (!llmCompleted) {
+          cleanup();
+          doRefund();
+          log.warn("SSE client disconnected before LLM completed, pre-charge refunded", {
+            sessionId,
+            accountId,
+            callId,
+          });
+        }
+      });
+
       let result: { reply: string; revisedText: string; usage?: { promptTokens: number; completionTokens: number; totalTokens: number } };
       try {
         result = await chatRewrite({
@@ -130,6 +148,8 @@ export function registerChatRoutes(params: { router: Router; logger: AppLogger; 
         return;
       }
 
+      // LLM 已成功返回，即使客户端此后断开也不再退款
+      llmCompleted = true;
       cleanup(); // stop pings before settling
 
       const finalPoints = calcFinalChargePoints({ text: result.revisedText, usage: result.usage, cfg });
