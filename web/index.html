@@ -473,15 +473,15 @@ body.sidebar-open .action-bar{margin-right:400px}
   <div class="header-inner">
     <a class="brand" href="/">
       <svg viewBox="0 0 28 28" fill="none"><circle cx="14" cy="14" r="13" stroke="currentColor" stroke-width="2"/><path d="M9 14.5l3 3 7-7" stroke="currentColor" stroke-width="2.2" stroke-linecap="round" stroke-linejoin="round"/></svg>
-      给我过
-      <span style="font-size:11px;font-weight:400;color:var(--g400);letter-spacing:.01em;white-space:nowrap">我又爱又恨的论文</span>
+      论文智能改写助手
+      <span style="font-size:11px;font-weight:400;color:var(--g400);letter-spacing:.01em;white-space:nowrap">AIGC 检测、分析与降重演示系统</span>
     </a>
     <div class="header-actions">
       <div class="balance-badge" title="当前积分余额">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><circle cx="12" cy="12" r="10"/><path d="M12 6v12M6 12h12"/></svg>
         <span class="num" id="balance">-</span> 积分
       </div>
-      <button class="icon-btn" id="topup" title="充值积分">
+      <button class="icon-btn" id="topup" title="充值积分" style="display:none">
         <svg width="16" height="16" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M12 2v20M2 12h20"/></svg>
       </button>
       <button class="icon-btn" id="history" title="历史会话">
@@ -521,14 +521,6 @@ body.sidebar-open .action-bar{margin-right:400px}
   <!-- ══════ UPLOAD ══════ -->
   <div class="card" id="uploadCard">
     <div class="card-body">
-      <div style="margin-bottom:16px;padding:14px 16px;border-radius:12px;background:#fff7ed;border:1px solid #fdba74;border-left:4px solid #f97316;color:#9a3412;font-size:13px;line-height:1.8">
-        <div style="font-weight:700;font-size:14px;margin-bottom:6px;display:flex;align-items:center;gap:6px">
-          <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="#ea580c" stroke-width="2.4"><path d="M10.29 3.86L1.82 18a2 2 0 001.71 3h16.94a2 2 0 001.71-3L13.71 3.86a2 2 0 00-3.42 0z"/><line x1="12" y1="9" x2="12" y2="13"/><line x1="12" y1="17" x2="12.01" y2="17"/></svg>
-          首页公告
-        </div>
-        <div>因小红书账号被人举报，目前正在申诉处理中，预计 <strong>3 月 28 日</strong>恢复。网站功能不受影响，仍可正常检测、改写和下载。</div>
-        <div>目前店铺仍可正常下单，客服功能也正常。<strong>积分充值</strong>请直接在店铺下单，<strong>售后问题</strong>可直接联系店铺客服处理。</div>
-      </div>
       <div class="upload-zone" id="dropZone">
         <svg viewBox="0 0 48 48" fill="none" stroke="currentColor" stroke-width="2"><path d="M28 8H12a4 4 0 00-4 4v24a4 4 0 004 4h24a4 4 0 004-4V20L28 8z"/><path d="M28 8v12h12"/><path d="M24 34v-8m-4 4l4-4 4 4"/></svg>
         <h3 id="dropTitle">拖拽或点击上传 .docx 文件</h3>
@@ -543,11 +535,11 @@ body.sidebar-open .action-bar{margin-right:400px}
       </div>
       <div class="free-banner">
         <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><path d="M22 11.08V12a10 10 0 11-5.93-9.14"/><path d="M22 4L12 14.01l-3-3"/></svg>
-        <span><strong>首次检测完全免费</strong>，无需注册</span>
+        <span><strong>支持完整演示流程</strong>，无需注册</span>
         <span class="free-banner-sep" id="freeSep" style="display:none">|</span>
-        <span id="freePtsWrap" style="display:none">新用户赠送 <strong id="freePtsHint">0</strong> 积分用于改写降AI率</span>
+        <span id="freePtsWrap" style="display:none">系统内置 <strong id="freePtsHint">0</strong> 积分用于展示自动改写链路</span>
         <span class="free-banner-sep" id="buySep">|</span>
-        <span>需要改写可随时购买积分</span>
+        <span>支持一键自动降重与逐段精修</span>
       </div>
 
       <!-- ── 纯文字粘贴备用入口 ── -->
@@ -960,45 +952,45 @@ body.sidebar-open .action-bar{margin-right:400px}
 <div class="modal-overlay" id="pricingModal">
   <div class="modal" style="max-width:500px">
     <div class="modal-header">
-      购买积分
+      演示模式说明
       <button class="icon-btn" id="pricingClose">&times;</button>
     </div>
     <div class="modal-body" style="padding:20px">
 
-      <!-- 积分说明 intro -->
+      <!-- 演示说明 intro -->
       <div class="pricing-intro">
         <span class="pricing-intro-icon">💡</span>
-        <span>积分用于 AI 自动改写，每改写约 <strong>200 字</strong>消耗 <strong>1 积分</strong>。检测不消耗积分，可免费使用。</span>
+        <span>当前页面为产品演示版本。下方信息用于展示系统在不同改写强度和长文场景下的能力覆盖范围，不代表对外售卖方案。</span>
       </div>
 
       <!-- 动态估算（有文档时显示） -->
       <div id="pricingEstimate" class="pricing-estimate" style="display:none"></div>
 
-      <!-- 套餐卡片 -->
+      <!-- 能力卡片 -->
       <div class="pricing-packages" id="pkgGrid">
         <div class="pkg-card" data-pkg="lite">
-          <div class="pkg-name">体验包</div>
-          <div class="pkg-price"><sup>¥</sup>9.9</div>
-          <div class="pkg-points">100 积分</div>
-          <div class="pkg-desc">约 2 万字改写<br>适合单章节试试</div>
+          <div class="pkg-name">轻量演示</div>
+          <div class="pkg-price">单段精修</div>
+          <div class="pkg-points">逐段对话改写</div>
+          <div class="pkg-desc">适合展示定向改写<br>与人工可控编辑</div>
         </div>
         <div class="pkg-card hot" data-pkg="base">
           <div class="pkg-badge">推荐</div>
-          <div class="pkg-name">基础包</div>
-          <div class="pkg-price"><sup>¥</sup>29.9</div>
-          <div class="pkg-points">400 积分</div>
-          <div class="pkg-desc">约 8 万字改写<br>够一篇硕士论文</div>
+          <div class="pkg-name">标准演示</div>
+          <div class="pkg-price">整篇论文</div>
+          <div class="pkg-points">检测 + 自动降重</div>
+          <div class="pkg-desc">适合展示完整闭环<br>与多轮改写流程</div>
         </div>
         <div class="pkg-card" data-pkg="pro">
-          <div class="pkg-name">旗舰包</div>
-          <div class="pkg-price"><sup>¥</sup>79.9</div>
-          <div class="pkg-points">1200 积分</div>
-          <div class="pkg-desc">约 24 万字改写<br>多稿反复修改无忧</div>
+          <div class="pkg-name">复杂场景演示</div>
+          <div class="pkg-price">长文多轮</div>
+          <div class="pkg-points">大规模改写任务</div>
+          <div class="pkg-desc">适合展示长文处理<br>和重复迭代能力</div>
         </div>
       </div>
 
       <!-- 购买步骤 -->
-      <div class="buy-how">
+      <div class="buy-how" style="display:none">
         <div class="buy-how-title">如何充值积分？</div>
         <div class="buy-steps">
           <div class="buy-step">
@@ -1019,7 +1011,7 @@ body.sidebar-open .action-bar{margin-right:400px}
       </div>
 
       <!-- 兑换码输入 -->
-      <div class="redeem-section">
+      <div class="redeem-section" style="display:none">
         <h4>
           <svg width="14" height="14" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2"><rect x="2" y="7" width="20" height="14" rx="2"/><path d="M16 21V5a2 2 0 00-2-2h-4a2 2 0 00-2 2v16"/></svg>
           已有兑换码？在这里输入
